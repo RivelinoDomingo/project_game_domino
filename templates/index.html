@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VAR do Dominó</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #2c3e50; /* Fundo escuro como mesa de jogo */
+            color: white;
+            text-align: center;
+            padding: 50px;
+        }
+
+        #mesa {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #34495e;
+            border-radius: 10px;
+            min-height: 100px;
+        }
+
+        /* Desenhando o Dominó com CSS */
+        .domino {
+            width: 50px;
+            height: 100px;
+            background-color: #ecf0f1;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            color: black;
+            font-weight: bold;
+            font-size: 24px;
+        }
+
+        .metade {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .traco {
+            height: 2px;
+            background-color: #2c3e50;
+            width: 80%;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>VAR do Dominó 🎲</h1>
+    <p>Mesa Central (Atualizado em tempo real)</p>
+
+    <div id="mesa">
+        Carregando pedras...
+    </div>
+
+    <script>
+        // Função que vai no servidor buscar a lista de pedras
+        async function atualizarMesa() {
+            try {
+                const resposta = await fetch('/api/mesa');
+                const dados = await resposta.json();
+
+                const divMesa = document.getElementById('mesa');
+                divMesa.innerHTML = ''; // Limpa a mesa antes de atualizar
+
+                if(dados.pedras.length === 0) {
+                    divMesa.innerHTML = 'Nenhuma pedra na mesa.';
+                    return;
+                }
+
+                // Para cada pedra que o Python achou (ex: "5|0"), criamos o HTML dela
+                dados.pedras.forEach(pedra_str => {
+                    const partes = pedra_str.split('|');
+                    const cima = partes[0];
+                    const baixo = partes[1];
+
+                    // Criando o bloquinho do dominó
+                    const dominoHtml = `
+                        <div class="domino">
+                            <div class="metade">${cima}</div>
+                            <div class="traco"></div>
+                            <div class="metade">${baixo}</div>
+                        </div>
+                    `;
+                    divMesa.innerHTML += dominoHtml;
+                });
+
+            } catch (error) {
+                console.error("Erro ao buscar as pedras:", error);
+            }
+        }
+
+        // Chama a função imediatamente ao abrir a página
+        atualizarMesa();
+
+        // OPCIONAL: Atualiza a mesa a cada 2 segundos (descomente quando estiver usando a câmera ao vivo)
+        setInterval(atualizarMesa, 2000);
+    </script>
+
+</body>
+</html>
