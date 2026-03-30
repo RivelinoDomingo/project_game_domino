@@ -60,12 +60,19 @@
 
     <div style="background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: inline-block;">
         <label for="zoomSlider">🔍 Zoom / Escala (Calibragem): <span id="zoomValor">0.8</span>x</label><br>
-        <input type="range" id="zoomSlider" min="0.5" max="2.0" step="0.02" value="0.8" style="width: 300px; margin-top: 10px;">
+        <input type="range" id="zoomSlider" min="0.4" max="2.5" step="0.02" value="0.8" style="width: 300px; margin-top: 10px;">
     </div>
 
-     <div style="margin: 20px auto; max-width: 800px;">
-        <h3>Visão do Robô (Ao Vivo)</h3>
-        <img src="/video_feed" style="width: 100%; border: 3px solid #ecf0f1; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+    <div style="background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: inline-block; margin-left: 10px;">
+        <label style="cursor: pointer;">
+            <input type="checkbox" id="videoToggle" checked style="transform: scale(1.5); margin-right: 10px;">
+            📹 Câmera ao Vivo
+        </label>
+    </div>
+
+     <div id="videoContainer" style="margin: 20px auto; max-width: 800px;">
+        <h3>Visão da Mesa</h3>
+        <img id="videoFeed" src="/video_feed" style="width: 100%; border: 3px solid #ecf0f1; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
     </div>
 
     <p>Mesa Central (Atualizado em tempo real)</p>
@@ -115,9 +122,9 @@
         atualizarMesa();
 
         // OPCIONAL: Atualiza a mesa a cada 2 segundos (descomente quando estiver usando a câmera ao vivo)
-        setInterval(atualizarMesa, 3000);
+        setInterval(atualizarMesa, 2000);
 
-        // --- NOVO CÓDIGO DO ZOOM ---
+        // CÓDIGO DO ZOOM ---
         const slider = document.getElementById('zoomSlider');
         const valorTexto = document.getElementById('zoomValor');
 
@@ -133,6 +140,32 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ zoom: zoomAtual })
+            });
+        });
+
+        // CÓDIGO DO TOGGLE DE VÍDEO ---
+        const videoToggle = document.getElementById('videoToggle');
+        const videoContainer = document.getElementById('videoContainer');
+        const videoFeed = document.getElementById('videoFeed');
+
+        videoToggle.addEventListener('change', function() {
+            const ativar = this.checked;
+
+            if (ativar) {
+                // Mostra o quadro e reconecta o stream
+                videoContainer.style.display = 'block';
+                videoFeed.src = "/video_feed";
+            } else {
+                // Esconde o quadro e corta a conexão da imagem no navegador
+                videoContainer.style.display = 'none';
+                videoFeed.src = "";
+            }
+
+            // Avisa o Python para parar de trabalhar no JPG e economizar CPU!
+            fetch('/api/toggle_video', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ativar: ativar })
             });
         });
     </script>

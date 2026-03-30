@@ -19,7 +19,8 @@ zoom_factor = 0.8
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
-INTERVALO_SEGUNDOS = 3.0 # Processa a mesa a cada 2 segundos
+INTERVALO_SEGUNDOS = 2.0 # Processa a mesa a cada 2 segundos
+enviar_video = True  # Começa ligado
 
 def ordenar_pontos(pts):
     # Inicializa uma lista de coordenadas que serão ordenadas
@@ -113,12 +114,14 @@ def extrair_e_contar(img, rect_pedra):
 # ====================================================================
 
 def loop_da_camera():
-    global ultima_leitura_pedras, ultimo_tempo_processamento
+    global ultima_leitura_pedras, ultimo_tempo_processamento, camera
 
     while True:
         sucesso, frame = camera.read()
         if not sucesso:
-            time.sleep(0.1)
+            # print("Erro: Frame não processado.")
+            time.sleep(5)
+            camera = cv2.VideoCapture("http://192.168.1.135:5000/video")
             continue
 
         tempo_atual = time.time()
@@ -170,10 +173,11 @@ def loop_da_camera():
                 # O traço costuma ter entre 15px e 26px.
                 # Vamos barrar qualquer coisa que seja maior que a própria pedra!
                 LIMITE_MAX_TRACO = 32
-                LIMITE_MIN_TRACO = 10 # Ignora cisco que o ratio achou que era linha
+                LIMITE_MIN_TRACO = 12 # Ignora cisco que o ratio achou que era linha
+                LIMITE_EXPESSURA = 4
 
                 # Adicionamos os limites de comprimento no IF principal
-                if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO):
+                if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_EXPESSURA):
 
                     if w_box > h_box:
                         rect_pedra = ((cx, cy), (30, 61), angle)
@@ -229,7 +233,7 @@ def loop_da_camera():
             # ==========================================
             # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
             # ==========================================
-            DISTANCIA_CONEXAO = 200  # Tamanho da "Área de influência" de cada pedra
+            DISTANCIA_CONEXAO = 100  # Tamanho da "Área de influência" de cada pedra
 
             visitados = set()
             todos_os_bandos = []
@@ -288,9 +292,6 @@ def loop_da_camera():
             lista_final = []
             out = img.copy()
 
-            # Ordena de cima para baixo
-            pedras_aprovadas.sort(key=lambda x: x['centro'][1], reverse=True)
-
             for d in pedras_aprovadas:
                 # Pega a contagem real
                 pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
@@ -298,30 +299,30 @@ def loop_da_camera():
                 # Adiciona na lista que vai para a Web
                 lista_final.append(f"{pts_cima}|{pts_baixo}")
 
-                # --- DESENHA AS CAIXAS PARA A WEB VER ---
-                box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
-                cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
+                if enviar_video:
+                    # --- DESENHA AS CAIXAS PARA A WEB VER ---
+                    box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
+                    cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
 
-                box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
-                cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
+                    box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
+                    cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
 
-                # Opcional: Escreve o número da pedra lida na própria imagem
-                cx, cy = int(d['centro'][0]), int(d['centro'][1])
-                cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 20, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    # Opcional: Escreve o número da pedra lida na própria imagem
+                    cx, cy = int(d['centro'][0]), int(d['centro'][1])
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 20, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             global ultima_leitura_pedras, ultimo_frame_processado
+
+            if enviar_video:
+                if out is not None:
+                    sucesso_encode, buffer = cv2.imencode('.jpg', out)
+                    if sucesso_encode:
+                        ultimo_frame_processado = buffer.tobytes()
+
+            else:
+                ultimo_frame_processado = None # Esvazia a memória
+
             ultima_leitura_pedras = lista_final
-
-            # --- CONVERTE A IMAGEM PARA MANDAR PRO FLASK ---
-            # Transforma a imagem do OpenCV num arquivo JPEG em memória
-            sucesso_encode, buffer = cv2.imencode('.jpg', out)
-            if sucesso_encode:
-                ultimo_frame_processado = buffer.tobytes()
-
-            if out is not None:
-                sucesso_encode, buffer = cv2.imencode('.jpg', out)
-                if sucesso_encode:
-                    ultimo_frame_processado = buffer.tobytes()
 
             # --- A CORREÇÃO ESTÁ AQUI ---
             # Avisamos ao Python que queremos modificar a variável global
@@ -351,6 +352,14 @@ def gerar_frames():
 def video_feed():
     # Essa rota devolve o vídeo ao vivo!
     return Response(gerar_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/toggle_video', methods=['POST'])
+def toggle_video():
+    global enviar_video
+    dados = request.get_json()
+    enviar_video = dados.get('ativar', True)
+    print(f"Transmissão de vídeo: {'LIGADA' if enviar_video else 'DESLIGADA'}")
+    return jsonify({"status": "sucesso"})
 
 @app.route('/')
 def index():
