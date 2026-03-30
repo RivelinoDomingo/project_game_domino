@@ -3,172 +3,381 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VAR do Dominó</title>
+    <title>VAR do Dominó Oficial</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #2c3e50; /* Fundo escuro como mesa de jogo */
+            background-color: #1e272e;
             color: white;
             text-align: center;
-            padding: 50px;
-        }
-
-        #mesa {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            justify-content: center;
-            margin-top: 30px;
+            margin: 0;
             padding: 20px;
-            background-color: #34495e;
-            border-radius: 10px;
-            min-height: 100px;
         }
 
-        /* Desenhando o Dominó com CSS */
-        .domino {
-            width: 50px;
-            height: 100px;
-            background-color: #ecf0f1;
-            border-radius: 8px;
+        /* =========================================
+           MENU LATERAL (MANTIDO DO ANTERIOR)
+           ========================================= */
+        #menu-btn {
+            position: fixed; top: 20px; right: 25px; font-size: 35px;
+            cursor: pointer; z-index: 1000; transition: 0.3s;
+        }
+        #menu-btn:hover { color: #3498db; }
+        #side-panel {
+            position: fixed; top: 0; right: -350px; width: 300px; height: 100%;
+            background-color: #2c3e50; border-left: 2px solid #34495e;
+            transition: 0.4s ease-in-out; padding: 80px 20px 20px;
+            box-shadow: -5px 0 15px rgba(0,0,0,0.5); z-index: 999; text-align: left;
+            box-sizing: border-box; overflow-y: auto;
+        }
+        #side-panel.open { right: 0; }
+        .config-group { background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .config-group label { display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px; }
+        .config-group input { width: 100%; box-sizing: border-box; }
+
+        /* =========================================
+           LAYOUT DA ARENA (JOGADORES E MESA)
+           ========================================= */
+        #arena {
+            display: grid;
+            grid-template-columns: 250px 1fr 250px; /* Esquerda, Centro, Direita */
+            grid-template-rows: auto 1fr auto;      /* Topo, Centro, Base */
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            min-height: 80vh;
+        }
+
+        .area-jogador {
+            background-color: #2c3e50;
+            border: 2px dashed #7f8c8d;
+            border-radius: 12px;
+            padding: 15px;
+            position: relative;
             display: flex;
             flex-direction: column;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
-            color: black;
+            align-items: center;
+        }
+
+        /* Posicionamento dos jogadores no Grid */
+        #area-p1 { grid-column: 2; grid-row: 3; } /* Embaixo */
+        #area-p2 { grid-column: 3; grid-row: 2; } /* Direita */
+        #area-p3 { grid-column: 2; grid-row: 1; } /* Em cima */
+        #area-p4 { grid-column: 1; grid-row: 2; } /* Esquerda */
+
+        #area-mesa {
+            grid-column: 2;
+            grid-row: 2;
+            background-color: #27ae60; /* Verde estilo mesa de bilhar/dominó */
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+            display: flex;
+            flex-wrap: wrap;
+            align-content: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .header-jogador {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #7f8c8d;
+            padding-bottom: 5px;
+        }
+
+        .btn-scan {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
             font-weight: bold;
-            font-size: 24px;
+            transition: 0.2s;
+        }
+        .btn-scan:hover { background-color: #2980b9; }
+        .btn-scan.ativo { background-color: #e74c3c; animation: piscar 1s infinite; }
+
+        @keyframes piscar {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .container-pedras {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            justify-content: center;
+            min-height: 60px;
+            width: 100%;
+        }
+
+        /* =========================================
+           O DOMINÓ COM BOLINHAS REAIS (Tamanho reduzido para caber nas mãos)
+           ========================================= */
+        .domino {
+            width: 36px;
+            height: 72px;
+            background-color: #ecf0f1;
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.6);
+            padding: 3px;
+            box-sizing: border-box;
+        }
+
+        /* Pedras na mesa são maiores */
+        #area-mesa .domino {
+            width: 50px; height: 100px;
         }
 
         .metade {
             flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 1px;
         }
 
-        .traco {
-            height: 2px;
-            background-color: #2c3e50;
-            width: 80%;
-            margin: 0 auto;
-        }
+        .traco { height: 2px; background-color: #2c3e50; width: 90%; margin: 1px auto; }
+        .ponto { background-color: black; border-radius: 50%; width: 6px; height: 6px; place-self: center; }
+        #area-mesa .ponto { width: 8px; height: 8px; }
+        .ponto.vazio { background-color: transparent; }
+
     </style>
 </head>
 <body>
 
-    <h1>VAR do Dominó 🎲</h1>
+    <audio id="somSucesso" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
 
-    <div style="background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: inline-block;">
-        <label for="zoomSlider">🔍 Zoom / Escala (Calibragem): <span id="zoomValor">0.8</span>x</label><br>
-        <input type="range" id="zoomSlider" min="0.4" max="2.5" step="0.02" value="0.8" style="width: 300px; margin-top: 10px;">
+    <div id="menu-btn">☰</div>
+
+    <div id="side-panel">
+        <h2 style="margin-top: 0; border-bottom: 1px solid #7f8c8d; padding-bottom: 10px;">Configurações</h2>
+
+        <div class="config-group">
+            <label style="cursor: pointer;">
+                <input type="checkbox" id="videoToggle" checked style="transform: scale(1.3); margin-right: 8px;">
+                📹 Mostrar Visão do Robô
+            </label>
+        </div>
+
+        <div id="videoContainer" style="margin-bottom: 20px;">
+            <img id="videoFeed" src="/video_feed" style="width: 100%; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
+        </div>
+
+        <div class="config-group">
+            <label for="zoomSlider">🔍 Zoom: <span id="zoomValor">0.8</span>x</label>
+            <input type="range" id="zoomSlider" min="0.5" max="3.0" step="0.01" value="0.8">
+        </div>
+
+        <div class="config-group">
+            <label for="inputMemoria">🧠 Tempo Memória (s):</label>
+            <input type="number" id="inputMemoria" value="4.0" step="0.5" min="0.5" max="10">
+        </div>
+
+        <div class="config-group">
+            <label for="inputIntervalo">⏱️ Intervalo Câmera (s):</label>
+            <input type="number" id="inputIntervalo" value="2.0" step="0.5" min="0.5" max="5">
+        </div>
+
+        <button id="btnForcarMesa" style="width: 100%; padding: 10px; background: #e67e22; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
+            Voltar Câmera para MESA
+        </button>
     </div>
 
-    <div style="background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: inline-block; margin-left: 10px;">
-        <label style="cursor: pointer;">
-            <input type="checkbox" id="videoToggle" checked style="transform: scale(1.5); margin-right: 10px;">
-            📹 Câmera ao Vivo
-        </label>
-    </div>
+    <h1>VAR do Dominó Oficial 🎲</h1>
 
-     <div id="videoContainer" style="margin: 20px auto; max-width: 800px;">
-        <h3>Visão da Mesa</h3>
-        <img id="videoFeed" src="/video_feed" style="width: 100%; border: 3px solid #ecf0f1; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
-    </div>
+    <div id="arena">
 
-    <p>Mesa Central (Atualizado em tempo real)</p>
+        <div class="area-jogador" id="area-p4">
+            <div class="header-jogador">
+                <span>P4 (Esquerda)</span>
+                <button class="btn-scan" onclick="iniciarEscaneamento('p4')">[+] Escanear</button>
+            </div>
+            <div class="container-pedras" id="pedras-p4"></div>
+        </div>
 
-    <div id="mesa">
-        Carregando pedras...
+        <div class="area-jogador" id="area-p3">
+            <div class="header-jogador">
+                <span>P3 (Topo)</span>
+                <button class="btn-scan" onclick="iniciarEscaneamento('p3')">[+] Escanear</button>
+            </div>
+            <div class="container-pedras" id="pedras-p3"></div>
+        </div>
+
+        <div id="area-mesa">
+            <h3 style="width: 100%; margin: 0 0 10px 0; text-align: left; color: #ecf0f1; text-shadow: 1px 1px 2px black;">Mesa Central</h3>
+            <div class="container-pedras" id="pedras-mesa" style="justify-content: flex-start;">Aguardando jogadas...</div>
+        </div>
+
+        <div class="area-jogador" id="area-p2">
+            <div class="header-jogador">
+                <span>P2 (Direita)</span>
+                <button class="btn-scan" onclick="iniciarEscaneamento('p2')">[+] Escanear</button>
+            </div>
+            <div class="container-pedras" id="pedras-p2"></div>
+        </div>
+
+        <div class="area-jogador" id="area-p1">
+            <div class="header-jogador">
+                <span>P1 (Você)</span>
+                <button class="btn-scan" onclick="iniciarEscaneamento('p1')">[+] Escanear</button>
+            </div>
+            <div class="container-pedras" id="pedras-p1"></div>
+        </div>
+
     </div>
 
     <script>
-        // Função que vai no servidor buscar a lista de pedras
-        async function atualizarMesa() {
+        // ==========================================
+        // MENU E CONFIGURAÇÕES
+        // ==========================================
+        const menuBtn = document.getElementById('menu-btn');
+        const sidePanel = document.getElementById('side-panel');
+
+        menuBtn.addEventListener('click', () => {
+            sidePanel.classList.toggle('open');
+            menuBtn.innerText = sidePanel.classList.contains('open') ? '✖' : '☰';
+        });
+
+        document.getElementById('videoToggle').addEventListener('change', function() {
+            const ativar = this.checked;
+            document.getElementById('videoContainer').style.display = ativar ? 'block' : 'none';
+            document.getElementById('videoFeed').src = ativar ? "/video_feed" : "";
+            fetch('/api/toggle_video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ativar: ativar }) });
+        });
+
+        document.getElementById('zoomSlider').addEventListener('input', function() {
+            document.getElementById('zoomValor').innerText = this.value;
+            fetch('/api/zoom', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zoom: this.value }) });
+        });
+
+        function enviarConfiguracoes() {
+            fetch('/api/config', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tempo_memoria: document.getElementById('inputMemoria').value,
+                    intervalo_segundos: document.getElementById('inputIntervalo').value
+                })
+            });
+        }
+        document.getElementById('inputMemoria').addEventListener('change', enviarConfiguracoes);
+        document.getElementById('inputIntervalo').addEventListener('change', enviarConfiguracoes);
+
+        document.getElementById('btnForcarMesa').addEventListener('click', () => {
+            fetch('/api/set_modo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modo: 'mesa' }) });
+            atualizarBotoesScan('mesa');
+        });
+
+        // ==========================================
+        // LÓGICA DO JOGO E BOLINHAS
+        // ==========================================
+        function gerarPontos(numero) {
+            const matrizes = {
+                0: [0,0,0, 0,0,0, 0,0,0],
+                1: [0,0,0, 0,1,0, 0,0,0],
+                2: [0,0,1, 0,0,0, 1,0,0],
+                3: [0,0,1, 0,1,0, 1,0,0],
+                4: [1,0,1, 0,0,0, 1,0,1],
+                5: [1,0,1, 0,1,0, 1,0,1],
+                6: [1,0,1, 1,0,1, 1,0,1]
+            };
+            const padrao = matrizes[parseInt(numero)] || matrizes[0];
+            let html = '';
+            padrao.forEach(temBolinha => { html += `<div class="ponto ${temBolinha ? '' : 'vazio'}"></div>`; });
+            return html;
+        }
+
+        function renderizarDominos(listaPedrasStr, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            if (!listaPedrasStr || listaPedrasStr.length === 0) {
+                if(containerId === 'pedras-mesa') container.innerHTML = '<span style="color:#bdc3c7;">Mesa vazia.</span>';
+                return;
+            }
+
+            listaPedrasStr.forEach(pedra_str => {
+                const partes = pedra_str.split('|');
+                const dominoHtml = `
+                    <div class="domino">
+                        <div class="metade">${gerarPontos(partes[0])}</div>
+                        <div class="traco"></div>
+                        <div class="metade">${gerarPontos(partes[1])}</div>
+                    </div>
+                `;
+                container.innerHTML += dominoHtml;
+            });
+        }
+
+        function atualizarBotoesScan(modoAtual) {
+            ['p1', 'p2', 'p3', 'p4'].forEach(p => {
+                const btn = document.querySelector(`#area-${p} .btn-scan`);
+                if(modoAtual === p) {
+                    btn.classList.add('ativo');
+                    btn.innerText = '📸 Lendo...';
+                } else {
+                    btn.classList.remove('ativo');
+                    btn.innerText = '[+] Escanear';
+                }
+            });
+        }
+
+        function iniciarEscaneamento(jogador) {
+            fetch('/api/set_modo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modo: jogador })
+            });
+            atualizarBotoesScan(jogador);
+        }
+
+        let modoAtualAnterior = 'mesa';
+
+        async function loopDoJogo() {
             try {
-                const resposta = await fetch('/api/mesa');
+                const resposta = await fetch('/api/estado_jogo');
                 const dados = await resposta.json();
 
-                const divMesa = document.getElementById('mesa');
-                divMesa.innerHTML = ''; // Limpa a mesa antes de atualizar
+                // 1. Renderiza a Mesa
+                renderizarDominos(dados.mesa, 'pedras-mesa');
 
-                if(dados.pedras.length === 0) {
-                    divMesa.innerHTML = 'Nenhuma pedra na mesa.';
-                    return;
-                }
+                // 2. Renderiza os Jogadores
+                ['p1', 'p2', 'p3', 'p4'].forEach(jogador => {
+                    renderizarDominos(dados.jogadores[jogador], `pedras-${jogador}`);
 
-                // Para cada pedra que o Python achou (ex: "5|0"), criamos o HTML dela
-                dados.pedras.forEach(pedra_str => {
-                    const partes = pedra_str.split('|');
-                    const cima = partes[0];
-                    const baixo = partes[1];
+                    // 3. Regra do Sino: Se leu 7 pedras do jogador atual
+                    if (dados.modo_atual === jogador && dados.jogadores[jogador].length === 7) {
+                        document.getElementById('somSucesso').play();
 
-                    // Criando o bloquinho do dominó
-                    const dominoHtml = `
-                        <div class="domino">
-                            <div class="metade">${cima}</div>
-                            <div class="traco"></div>
-                            <div class="metade">${baixo}</div>
-                        </div>
-                    `;
-                    divMesa.innerHTML += dominoHtml;
+                        // Força a câmera voltar para a mesa
+                        fetch('/api/set_modo', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modo: 'mesa' })
+                        });
+                        alert(`Mão do Jogador ${jogador.toUpperCase()} validada com sucesso!`);
+                    }
                 });
 
+                // Atualiza visual dos botões se o modo mudou pelo Python
+                if(dados.modo_atual !== modoAtualAnterior) {
+                    atualizarBotoesScan(dados.modo_atual);
+                    modoAtualAnterior = dados.modo_atual;
+                }
+
             } catch (error) {
-                console.error("Erro ao buscar as pedras:", error);
+                console.error("Erro na comunicação com o VAR:", error);
             }
         }
 
-        // Chama a função imediatamente ao abrir a página
-        atualizarMesa();
+        // Roda o loop do HTML a cada 1 segundo
+        setInterval(loopDoJogo, 1000);
 
-        // OPCIONAL: Atualiza a mesa a cada 2 segundos (descomente quando estiver usando a câmera ao vivo)
-        setInterval(atualizarMesa, 2000);
-
-        // CÓDIGO DO ZOOM ---
-        const slider = document.getElementById('zoomSlider');
-        const valorTexto = document.getElementById('zoomValor');
-
-        slider.addEventListener('input', function() {
-            // Atualiza o textozinho do lado do slider na hora
-            const zoomAtual = this.value;
-            valorTexto.innerText = zoomAtual;
-
-            // Manda o novo valor para o Python escondido em segundo plano!
-            fetch('/api/zoom', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ zoom: zoomAtual })
-            });
-        });
-
-        // CÓDIGO DO TOGGLE DE VÍDEO ---
-        const videoToggle = document.getElementById('videoToggle');
-        const videoContainer = document.getElementById('videoContainer');
-        const videoFeed = document.getElementById('videoFeed');
-
-        videoToggle.addEventListener('change', function() {
-            const ativar = this.checked;
-
-            if (ativar) {
-                // Mostra o quadro e reconecta o stream
-                videoContainer.style.display = 'block';
-                videoFeed.src = "/video_feed";
-            } else {
-                // Esconde o quadro e corta a conexão da imagem no navegador
-                videoContainer.style.display = 'none';
-                videoFeed.src = "";
-            }
-
-            // Avisa o Python para parar de trabalhar no JPG e economizar CPU!
-            fetch('/api/toggle_video', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ativar: ativar })
-            });
-        });
     </script>
-
 </body>
 </html>
