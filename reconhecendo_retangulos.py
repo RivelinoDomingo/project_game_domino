@@ -1,19 +1,32 @@
 import cv2
 import numpy as np
 import math
+import argparse
+
+
+parser = argparse.ArgumentParser(description='Processa imagens')
+parser.add_argument('imagem', help='Caminho para o arquivo de imagem')
+parser.add_argument('-z', '--zoom', type=float, help='Valor float para nivel de zoom da imagem, padrão 0.8')
+args = parser.parse_args()
+zoom_factor = args.zoom
+
+if zoom_factor is None:
+        zoom_factor = 0.8
+
 
 def pipeline_blackhat(img_path):
     img = cv2.imread(img_path)
     if img is None:
         print("Erro: Imagem não encontrada.")
         return
-
+    # Área de zoom
+    img = cv2.resize(img, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (18, 18))
+    kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 12))
     blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
 
-    _, mask_bh = cv2.threshold(blackhat, 68, 255, cv2.THRESH_BINARY)
+    _, mask_bh = cv2.threshold(blackhat, 100, 255, cv2.THRESH_BINARY)
     kernel_close = np.ones((2,2), np.uint8)
     mask_soldada = cv2.morphologyEx(mask_bh, cv2.MORPH_CLOSE, kernel_close)
 
@@ -79,23 +92,74 @@ def pipeline_blackhat(img_path):
     # Isso garante que caixas centralizadas perfeitas derrotem as caixas de borda.
     candidatos.sort(key=lambda x: x['brilho'], reverse=True)
 
-    pedras_aprovadas = []
+    # ==========================================
+    # PASSO 1: Remover Duplicatas (Caixas na mesma pedra)
+    # ==========================================
+    pedras_unicas = []
     DISTANCIA_MINIMA = 34
 
     for cand in candidatos:
         cx1, cy1 = cand['centro']
         duplicata = False
 
-        for aprovada in pedras_aprovadas:
-            cx2, cy2 = aprovada['centro']
-            dist = math.hypot(cx2 - cx1, cy2 - cy1)
-
-            if dist < DISTANCIA_MINIMA:
+        for p in pedras_unicas:
+            cx2, cy2 = p['centro']
+            if math.hypot(cx2 - cx1, cy2 - cy1) < DISTANCIA_MINIMA:
                 duplicata = True
                 break
 
         if not duplicata:
-            pedras_aprovadas.append(cand)
+            pedras_unicas.append(cand)
+
+    # ==========================================
+    # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
+    # ==========================================
+    DISTANCIA_CONEXAO = 200  # Tamanho da "Área de influência" de cada pedra
+
+    visitados = set()
+    todos_os_bandos = []
+
+    for i, p1 in enumerate(pedras_unicas):
+        # Se essa pedra já entrou num bando antes, ignoramos
+        if i in visitados:
+            continue
+
+        # Começamos um novo bando com essa pedra
+        bando_atual = [p1]
+        visitados.add(i)
+
+        # A "Fila de Expansão" (vai checar os amigos dos amigos)
+        fila_de_expansao = [p1]
+
+        while fila_de_expansao:
+            pedra_foco = fila_de_expansao.pop(0)
+            cx_foco, cy_foco = pedra_foco['centro']
+
+            # Procura novos amigos para puxar para o bando
+            for j, p2 in enumerate(pedras_unicas):
+                if j not in visitados:
+                    cx2, cy2 = p2['centro']
+                    dist = math.hypot(cx2 - cx_foco, cy2 - cy_foco)
+
+                    # Se a pedra está dentro da área de influência, entra pro bando!
+                    if dist <= DISTANCIA_CONEXAO:
+                        bando_atual.append(p2)
+                        visitados.add(j)
+                        # Coloca ela na fila para a área de influência dela também ser checada!
+                        fila_de_expansao.append(p2)
+
+        # Guarda o bando que acabamos de formar
+        todos_os_bandos.append(bando_atual)
+
+    # ==========================================
+    # PASSO 3: Sobrevivência do Mais Forte
+    # ==========================================
+    if todos_os_bandos:
+        # A função max() com 'key=len' pega automaticamente a lista que tem mais itens!
+        maior_bando = max(todos_os_bandos, key=len)
+        pedras_aprovadas = maior_bando
+    else:
+        pedras_aprovadas = []
 
     print(f"Pedras únicas encontradas: {len(pedras_aprovadas)}")
 
@@ -195,7 +259,7 @@ def extrair_e_contar(img, rect_pedra):
                 area = cv2.contourArea(c)
 
                 # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
-                if 25 < area < 85:
+                if 30 < area < 85:
                     # BLINDAGEM 2: O filtro de formato (Circularidade)
                     perimetro = cv2.arcLength(c, True)
                     if perimetro == 0: continue
@@ -203,7 +267,7 @@ def extrair_e_contar(img, rect_pedra):
                     circularidade = 4 * np.pi * (area / (perimetro * perimetro))
 
                     # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
-                    if circularidade > 0.6:
+                    if circularidade > 0.4:
                         pontos += 1
 
             # BLINDAGEM 3: Trava matemática máxima de um dominó
@@ -222,4 +286,4 @@ def extrair_e_contar(img, rect_pedra):
 # TESTE
 # pipeline_blackhat("imagem_recortada.jpeg")
 # pipeline_blackhat("imagem.jpeg")
-pipeline_blackhat("droidcam-20260329-182616.jpg")
+pipeline_blackhat(args.imagem)

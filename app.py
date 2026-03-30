@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request, Response
 import cv2
 import numpy as np
 import math
@@ -9,12 +9,17 @@ app = Flask(__name__)
 
 # Configura a câmera (o Droidcam costuma criar um dispositivo no /dev/video0 ou similar)
 # Se estiver usando Droidcam via WiFi, você pode até passar a URL aqui! Ex: cv2.VideoCapture("http://192.168.1.100:4747/video")
-camera = cv2.VideoCapture("http://192.168.1.135:4747/video")
+camera = cv2.VideoCapture("http://192.168.1.135:5000/video")
+# Tenta forçar a câmera a ler em HD (1280x720) ou Full HD (1920x1080)
+# camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+# camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
 # Variáveis globais para armazenar a última leitura da mesa
+zoom_factor = 0.8
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
-INTERVALO_SEGUNDOS = 1.0 # Processa a mesa a cada 2 segundos
+ultimo_frame_processado = None
+INTERVALO_SEGUNDOS = 3.0 # Processa a mesa a cada 2 segundos
 
 def ordenar_pontos(pts):
     # Inicializa uma lista de coordenadas que serão ordenadas
@@ -82,7 +87,7 @@ def extrair_e_contar(img, rect_pedra):
                 area = cv2.contourArea(c)
 
                 # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
-                if 25 < area < 85:
+                if 30 < area < 85:
                     # BLINDAGEM 2: O filtro de formato (Circularidade)
                     perimetro = cv2.arcLength(c, True)
                     if perimetro == 0: continue
@@ -90,7 +95,7 @@ def extrair_e_contar(img, rect_pedra):
                     circularidade = 4 * np.pi * (area / (perimetro * perimetro))
 
                     # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
-                    if circularidade > 0.6:
+                    if circularidade > 0.4:
                         pontos += 1
 
             # BLINDAGEM 3: Trava matemática máxima de um dominó
@@ -126,20 +131,24 @@ def loop_da_camera():
             if img is None:
                 print("Erro: Imagem não encontrada.")
                 return
+            # --- APLICA O ZOOM DIGITAL ANTES DE TUDO ---
+            if zoom_factor != 1.0:
+                # Interpolação LINEAR mantém a qualidade ao dar zoom
+                img = cv2.resize(img, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
+
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-            kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (18, 18))
+            kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 12))
             blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
 
-            _, mask_bh = cv2.threshold(blackhat, 68, 255, cv2.THRESH_BINARY)
+            _, mask_bh = cv2.threshold(blackhat, 100, 255, cv2.THRESH_BINARY)
             kernel_close = np.ones((2,2), np.uint8)
             mask_soldada = cv2.morphologyEx(mask_bh, cv2.MORPH_CLOSE, kernel_close)
 
             contours, _ = cv2.findContours(mask_soldada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             candidatos = []
-            out = img.copy()
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
@@ -198,30 +207,86 @@ def loop_da_camera():
             # Isso garante que caixas centralizadas perfeitas derrotem as caixas de borda.
             candidatos.sort(key=lambda x: x['brilho'], reverse=True)
 
-            pedras_aprovadas = []
+            # ==========================================
+            # PASSO 1: Remover Duplicatas (Caixas na mesma pedra)
+            # ==========================================
+            pedras_unicas = []
             DISTANCIA_MINIMA = 34
 
             for cand in candidatos:
                 cx1, cy1 = cand['centro']
                 duplicata = False
 
-                for aprovada in pedras_aprovadas:
-                    cx2, cy2 = aprovada['centro']
-                    dist = math.hypot(cx2 - cx1, cy2 - cy1)
-
-                    if dist < DISTANCIA_MINIMA:
+                for p in pedras_unicas:
+                    cx2, cy2 = p['centro']
+                    if math.hypot(cx2 - cx1, cy2 - cy1) < DISTANCIA_MINIMA:
                         duplicata = True
                         break
 
                 if not duplicata:
-                    pedras_aprovadas.append(cand)
+                    pedras_unicas.append(cand)
+
+            # ==========================================
+            # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
+            # ==========================================
+            DISTANCIA_CONEXAO = 200  # Tamanho da "Área de influência" de cada pedra
+
+            visitados = set()
+            todos_os_bandos = []
+
+            for i, p1 in enumerate(pedras_unicas):
+                # Se essa pedra já entrou num bando antes, ignoramos
+                if i in visitados:
+                    continue
+
+                # Começamos um novo bando com essa pedra
+                bando_atual = [p1]
+                visitados.add(i)
+
+                # A "Fila de Expansão" (vai checar os amigos dos amigos)
+                fila_de_expansao = [p1]
+
+                while fila_de_expansao:
+                    pedra_foco = fila_de_expansao.pop(0)
+                    cx_foco, cy_foco = pedra_foco['centro']
+
+                    # Procura novos amigos para puxar para o bando
+                    for j, p2 in enumerate(pedras_unicas):
+                        if j not in visitados:
+                            cx2, cy2 = p2['centro']
+                            dist = math.hypot(cx2 - cx_foco, cy2 - cy_foco)
+
+                            # Se a pedra está dentro da área de influência, entra pro bando!
+                            if dist <= DISTANCIA_CONEXAO:
+                                bando_atual.append(p2)
+                                visitados.add(j)
+                                # Coloca ela na fila para a área de influência dela também ser checada!
+                                fila_de_expansao.append(p2)
+
+                # Guarda o bando que acabamos de formar
+                todos_os_bandos.append(bando_atual)
+
+            # ==========================================
+            # PASSO 3: Sobrevivência do Mais Forte
+            # ==========================================
+            if todos_os_bandos:
+                # A função max() com 'key=len' pega automaticamente a lista que tem mais itens!
+                maior_bando = max(todos_os_bandos, key=len)
+                pedras_aprovadas = maior_bando
+            else:
+                pedras_aprovadas = []
 
             print(f"Pedras únicas encontradas: {len(pedras_aprovadas)}")
+
+
+            # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
+            pedras_aprovadas.sort(key=lambda x: x['centro'][1])
 
             # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
             pedras_aprovadas.sort(key=lambda x: x['centro'][1])
 
             lista_final = []
+            out = img.copy()
 
             # Ordena de cima para baixo
             pedras_aprovadas.sort(key=lambda x: x['centro'][1], reverse=True)
@@ -233,19 +298,72 @@ def loop_da_camera():
                 # Adiciona na lista que vai para a Web
                 lista_final.append(f"{pts_cima}|{pts_baixo}")
 
+                # --- DESENHA AS CAIXAS PARA A WEB VER ---
+                box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
+                cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
+
+                box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
+                cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
+
+                # Opcional: Escreve o número da pedra lida na própria imagem
+                cx, cy = int(d['centro'][0]), int(d['centro'][1])
+                cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 20, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+            global ultima_leitura_pedras, ultimo_frame_processado
+            ultima_leitura_pedras = lista_final
+
+            # --- CONVERTE A IMAGEM PARA MANDAR PRO FLASK ---
+            # Transforma a imagem do OpenCV num arquivo JPEG em memória
+            sucesso_encode, buffer = cv2.imencode('.jpg', out)
+            if sucesso_encode:
+                ultimo_frame_processado = buffer.tobytes()
+
+            if out is not None:
+                sucesso_encode, buffer = cv2.imencode('.jpg', out)
+                if sucesso_encode:
+                    ultimo_frame_processado = buffer.tobytes()
+
             # --- A CORREÇÃO ESTÁ AQUI ---
             # Avisamos ao Python que queremos modificar a variável global
-            global ultima_leitura_pedras
-            # Passamos os dados da thread da câmera para o Flask ver!
-            ultima_leitura_pedras = lista_final
+            # global ultima_leitura_pedras
+            # # Passamos os dados da thread da câmera para o Flask ver!
+            # ultima_leitura_pedras = lista_final
 
 # ====================================================================
 # ROTAS DA WEB (A API)
 # ====================================================================
 
+def gerar_frames():
+    global ultimo_frame_processado
+    while True:
+        if ultimo_frame_processado is not None:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + ultimo_frame_processado + b'\r\n')
+
+            # ATENÇÃO AQUI: Forçar o streaming a rodar a ~10 FPS
+            # Sem isso, ele tenta mandar frames na velocidade da luz e trava o PC!
+            time.sleep(0.1)
+        else:
+            # Se ainda não houver foto, espera 0.1s e tenta de novo
+            time.sleep(0.1)
+
+@app.route('/video_feed')
+def video_feed():
+    # Essa rota devolve o vídeo ao vivo!
+    return Response(gerar_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/api/zoom', methods=['POST'])
+def atualizar_zoom():
+    global zoom_factor
+    # Recebe o valor do slider enviado pelo Javascript
+    dados = request.get_json()
+    zoom_factor = float(dados.get('zoom', 1.0))
+    print(f"Zoom atualizado para: {zoom_factor}x")
+    return jsonify({"status": "sucesso"})
 
 @app.route('/api/mesa')
 def api_mesa():

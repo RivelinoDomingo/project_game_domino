@@ -57,6 +57,17 @@
 <body>
 
     <h1>VAR do Dominó 🎲</h1>
+
+    <div style="background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: inline-block;">
+        <label for="zoomSlider">🔍 Zoom / Escala (Calibragem): <span id="zoomValor">0.8</span>x</label><br>
+        <input type="range" id="zoomSlider" min="0.5" max="2.0" step="0.02" value="0.8" style="width: 300px; margin-top: 10px;">
+    </div>
+
+     <div style="margin: 20px auto; max-width: 800px;">
+        <h3>Visão do Robô (Ao Vivo)</h3>
+        <img src="/video_feed" style="width: 100%; border: 3px solid #ecf0f1; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+    </div>
+
     <p>Mesa Central (Atualizado em tempo real)</p>
 
     <div id="mesa">
@@ -104,7 +115,26 @@
         atualizarMesa();
 
         // OPCIONAL: Atualiza a mesa a cada 2 segundos (descomente quando estiver usando a câmera ao vivo)
-        setInterval(atualizarMesa, 2000);
+        setInterval(atualizarMesa, 3000);
+
+        // --- NOVO CÓDIGO DO ZOOM ---
+        const slider = document.getElementById('zoomSlider');
+        const valorTexto = document.getElementById('zoomValor');
+
+        slider.addEventListener('input', function() {
+            // Atualiza o textozinho do lado do slider na hora
+            const zoomAtual = this.value;
+            valorTexto.innerText = zoomAtual;
+
+            // Manda o novo valor para o Python escondido em segundo plano!
+            fetch('/api/zoom', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ zoom: zoomAtual })
+            });
+        });
     </script>
 
 </body>
