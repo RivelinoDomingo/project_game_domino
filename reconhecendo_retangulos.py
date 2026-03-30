@@ -56,10 +56,11 @@ def pipeline_blackhat(img_path):
         # Vamos barrar qualquer coisa que seja maior que a própria pedra!
         # --- REFINO DO TRAÇO GORDINHO ---
         LIMITE_MAX_TRACO = 32
-        LIMITE_MIN_TRACO = 10
+        LIMITE_MIN_TRACO = 13
+        LIMITE_MAX_ESPESSURA = 6
 
         # Adicionamos os limites de comprimento no IF principal
-        if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO):
+        if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_MAX_ESPESSURA):
 
             if w_box > h_box:
                 rect_pedra = ((cx, cy), (30, 61), angle)
