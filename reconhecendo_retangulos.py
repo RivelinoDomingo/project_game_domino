@@ -55,9 +55,9 @@ def pipeline_blackhat(img_path):
         # O traço costuma ter entre 15px e 26px.
         # Vamos barrar qualquer coisa que seja maior que a própria pedra!
         # --- REFINO DO TRAÇO GORDINHO ---
-        LIMITE_MAX_TRACO = 40
-        LIMITE_MIN_TRACO = 13
-        LIMITE_MAX_ESPESSURA = 4
+        LIMITE_MAX_TRACO = 32
+        LIMITE_MIN_TRACO = 12
+        LIMITE_MAX_ESPESSURA = 5
 
         # Adicionamos os limites de comprimento no IF principal
         if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_MAX_ESPESSURA):
@@ -97,7 +97,7 @@ def pipeline_blackhat(img_path):
     # PASSO 1: Remover Duplicatas (Caixas na mesma pedra)
     # ==========================================
     pedras_unicas = []
-    DISTANCIA_MINIMA = 34
+    DISTANCIA_MINIMA = 30
 
     for cand in candidatos:
         cx1, cy1 = cand['centro']
@@ -115,7 +115,7 @@ def pipeline_blackhat(img_path):
     # ==========================================
     # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
     # ==========================================
-    DISTANCIA_CONEXAO = 200  # Tamanho da "Área de influência" de cada pedra
+    DISTANCIA_CONEXAO = 100  # Tamanho da "Área de influência" de cada pedra
 
     visitados = set()
     todos_os_bandos = []
@@ -168,18 +168,23 @@ def pipeline_blackhat(img_path):
     pedras_aprovadas.sort(key=lambda x: x['centro'][1])
 
     for d in pedras_aprovadas:
+
+        # Enviamos a imagem original limpa (img) e o retângulo da pedra
+        pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
+        texto = f"{pts_cima}|{pts_baixo}"
+        soma_pts = pts_cima + pts_baixo
+        if soma_pts <= 2:
+            if not validar_pedra_lisa(gray, d['rect_pedra']):
+                # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
+                print(f"Pedra Rejeitada: {texto}")
+                continue
         box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
         cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
 
         box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
         cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
-
-        # --- A NOVA CHAMADA ---
-        # Enviamos a imagem original limpa (img) e o retângulo da pedra
-        pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
-
         # Escrever o resultado na imagem, do lado da pedra!
-        texto = f"{pts_cima}|{pts_baixo}"
+
         cx, cy = int(d['centro'][0]), int(d['centro'][1])
 
         # Fundo preto para o texto ficar legível
@@ -210,6 +215,52 @@ def ordenar_pontos(pts):
     rect[3] = pts[np.argmax(diff)]
 
     return rect
+
+def validar_pedra_lisa(gray_img, rect_pedra):
+    # 1. Obter os 4 cantos da caixa verde
+    box = cv2.boxPoints(rect_pedra)
+    box = np.int32(box)
+
+    # Usa a sua função já existente para colocar os pontos na ordem certa
+    pts = ordenar_pontos(box)
+
+    # 2. "Esticar" a imagem para um retângulo perfeito (ex: 60x120 pixels)
+    largura, altura = 60, 120
+    pts_destino = np.array([
+        [0, 0],
+        [largura - 1, 0],
+        [largura - 1, altura - 1],
+        [0, altura - 1]
+    ], dtype="float32")
+
+    matriz = cv2.getPerspectiveTransform(pts, pts_destino)
+    pedra_plana = cv2.warpPerspective(gray_img, matriz, (largura, altura))
+
+    # 3. A Guilhotina: Divide exatamente no meio do traço
+    metade_cima = pedra_plana[0:altura//2, 0:largura]
+    metade_baixo = pedra_plana[altura//2:altura, 0:largura]
+
+    # 4. Calcula o Brilho e a Textura de cada metade individualmente
+    mean_c = cv2.meanStdDev(metade_cima)
+    mean_b = cv2.meanStdDev(metade_baixo)
+
+    brilho_c = mean_c[0][0]
+    brilho_b = mean_b[0][0]
+
+    # 5. A NOVA REGRA (Simetria de Brilho)
+    diferenca_brilho = abs(brilho_c - brilho_b)
+
+    # ========================================================
+    # OS CRITÉRIOS DE APROVAÇÃO:
+    # 1. As duas metades têm de ser claras (> 100)
+    # 2. A diferença de luz entre elas tem de ser pequena (< 40)
+    # ========================================================
+    if (brilho_c > 100 and brilho_b > 100) and diferenca_brilho < 30:
+        return True
+    else:
+        # Imprime no terminal o MOTIVO da rejeição para você poder calibrar!
+        print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) | Dif: {diferenca_brilho:.0f}")
+        return False
 
 def extrair_e_contar(img, rect_pedra):
     # Pega as 4 quinas da caixa verde

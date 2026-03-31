@@ -9,7 +9,8 @@ app = Flask(__name__)
 
 # Configura a câmera (o Droidcam costuma criar um dispositivo no /dev/video0 ou similar)
 # Se estiver usando Droidcam via WiFi, você pode até passar a URL aqui! Ex: cv2.VideoCapture("http://192.168.1.100:4747/video")
-camera = cv2.VideoCapture("http://192.168.1.135:5000/video")
+# camera = cv2.VideoCapture("http://192.168.1.135:5000/video")
+camera = cv2.VideoCapture("http://192.168.1.135:5000/video?video_size=1920x1080")
 # Tenta forçar a câmera a ler em HD (1280x720) ou Full HD (1920x1080)
 # camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 # camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -21,14 +22,17 @@ ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
 INTERVALO_SEGUNDOS = 2.0 # Processa a mesa a cada 2 segundos
 enviar_video = True      # Começa ligado
-DISTANCIA_MINIMA = 35    # Distância minima entre as pedras
+DISTANCIA_MINIMA = 30    # Distância minima entre as pedras
 TEMPO_MEMORIA = 4.0
 cache_pedras = []
 modo_leitura = 'mesa'
+tirar_foto_debug = False  # O nosso gatilho de foto debug
 maos_jogadores = {
     'p1': [], 'p2': [], 'p3': [], 'p4': []
 }
-
+Zerou_mao = False
+estado_intervalo = False
+CP_INTERVALO_SEGUNDOS = 0
 
 def ordenar_pontos(pts):
     # Inicializa uma lista de coordenadas que serão ordenadas
@@ -119,6 +123,53 @@ def extrair_e_contar(img, rect_pedra):
 
     return pts_cima, pts_baixo
 
+def validar_pedra_lisa(gray_img, rect_pedra):
+    # 1. Obter os 4 cantos da caixa verde
+    box = cv2.boxPoints(rect_pedra)
+    box = np.int32(box)
+
+    # Usa a sua função já existente para colocar os pontos na ordem certa
+    pts = ordenar_pontos(box)
+
+    # 2. "Esticar" a imagem para um retângulo perfeito (ex: 60x120 pixels)
+    largura, altura = 60, 120
+    pts_destino = np.array([
+        [0, 0],
+        [largura - 1, 0],
+        [largura - 1, altura - 1],
+        [0, altura - 1]
+    ], dtype="float32")
+
+    matriz = cv2.getPerspectiveTransform(pts, pts_destino)
+    pedra_plana = cv2.warpPerspective(gray_img, matriz, (largura, altura))
+
+    # 3. A Guilhotina: Divide exatamente no meio do traço
+    metade_cima = pedra_plana[0:altura//2, 0:largura]
+    metade_baixo = pedra_plana[altura//2:altura, 0:largura]
+
+    # 4. Calcula o Brilho e a Textura de cada metade individualmente
+    mean_c = cv2.meanStdDev(metade_cima)
+    mean_b = cv2.meanStdDev(metade_baixo)
+
+    brilho_c = mean_c[0][0]
+    brilho_b = mean_b[0][0]
+
+    # 5. A NOVA REGRA (Simetria de Brilho)
+    diferenca_brilho = abs(brilho_c - brilho_b)
+
+    # ========================================================
+    # OS CRITÉRIOS DE APROVAÇÃO:
+    # 1. As duas metades têm de ser claras (> 100)
+    # 2. A diferença de luz entre elas tem de ser pequena (< 40)
+    # ========================================================
+    if (brilho_c > 100 and brilho_b > 100) and diferenca_brilho < 30:
+        return True
+    else:
+        # Imprime no terminal o MOTIVO da rejeição para você poder calibrar!
+        # print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) Dif: {diferenca_brilho:.0f}")
+        # print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) | Dif: {diferenca_brilho:.0f} | Text(C:{textura_c:.0f}, B:{textura_b:.0f})")
+        return False
+
 # ====================================================================
 
 def loop_da_camera():
@@ -130,17 +181,29 @@ def loop_da_camera():
             print("Erro: Frame não processado.")
             print("Possível desconexão.")
             time.sleep(5)
-            camera = cv2.VideoCapture("http://192.168.1.135:5000/video")
+            camera = cv2.VideoCapture("http://192.168.1.135:5000/video?video_size=1920x1080")
             continue
 
         tempo_atual = time.time()
 
-        global modo_leitura, maos_jogadores, DISTANCIA_MINIMA
+        global modo_leitura, maos_jogadores, DISTANCIA_MINIMA, INTERVALO_SEGUNDOS, tirar_foto_debug
+        global Zerou_mao, CP_INTERVALO_SEGUNDOS, estado_intervalo
+
+        if not estado_intervalo:
+            CP_INTERVALO_SEGUNDOS = INTERVALO_SEGUNDOS
 
         if modo_leitura != 'mesa':
             DISTANCIA_MINIMA = 10
+            estado_intervalo = True
+            INTERVALO_SEGUNDOS = 0.4   ## Maior velocidade na identificação da pedra dos jogadores
+            if not Zerou_mao:
+                maos_jogadores[modo_leitura] = None
+                Zerou_mao = True
         else:
-            DISTANCIA_MINIMA = 35
+            DISTANCIA_MINIMA = 30
+            INTERVALO_SEGUNDOS = CP_INTERVALO_SEGUNDOS
+            estado_intervalo = False
+            Zerou_mao = False
 
         # Só executa a Visão Computacional se já passou o nosso intervalo
         if tempo_atual - ultimo_tempo_processamento >= INTERVALO_SEGUNDOS:
@@ -155,6 +218,13 @@ def loop_da_camera():
                 # Interpolação LINEAR mantém a qualidade ao dar zoom
                 img = cv2.resize(img, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
 
+            if tirar_foto_debug:
+                nome_arquivo = f"debug_mao_{modo_leitura}.jpeg"
+                cv2.imwrite(nome_arquivo, img)
+                print(f"📸 FOTO DE DEBUG SALVA NO PC: {nome_arquivo}")
+
+                # Desarma o gatilho para não encher o seu HD de fotos iguais
+                tirar_foto_debug = False
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -188,9 +258,9 @@ def loop_da_camera():
                 # A sua pedra projetada tem 30px de largura.
                 # O traço costuma ter entre 15px e 26px.
                 # Vamos barrar qualquer coisa que seja maior que a própria pedra!
-                LIMITE_MAX_TRACO = 40
-                LIMITE_MIN_TRACO = 13 # Ignora cisco que o ratio achou que era linha
-                LIMITE_EXPESSURA = 4
+                LIMITE_MAX_TRACO = 32
+                LIMITE_MIN_TRACO = 12 # Ignora cisco que o ratio achou que era linha
+                LIMITE_EXPESSURA = 5
 
                 # Adicionamos os limites de comprimento no IF principal
                 if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_EXPESSURA):
@@ -231,9 +301,6 @@ def loop_da_camera():
             # PASSO 1: Remover Duplicatas (Caixas na mesma pedra)
             # ==========================================
             pedras_unicas = []
-
-
-
             for cand in candidatos:
                 cx1, cy1 = cand['centro']
                 duplicata = False
@@ -299,43 +366,80 @@ def loop_da_camera():
 
             print(f"Pedras únicas encontradas: {len(pedras_aprovadas)}")
 
-
             # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
             pedras_aprovadas.sort(key=lambda x: x['centro'][1])
 
             # =================================================================
             # --- MEMÓRIA INDIVIDUAL (O MAPA DA MESA) ---
             # =================================================================
-            global cache_pedras
+
+            lista_final = []
+            out = img.copy()
+
+            global ultima_leitura_pedras, ultimo_frame_processado
+            global cache_pedras, enviar_video
             DISTANCIA_TOLERANCIA = 5 # Se a pedra está no mesmo lugar (margem de 30px), é a mesma.
 
             pedras_vistas_agora = []
+            valor_pedra = None
 
             for d in pedras_aprovadas:
-                cx_nova, cy_nova = d['centro']
-                pedra_reconhecida_memoria = None
-                menor_distancia = float('inf')
-
-                # 1. Procura qual pedra da memória está mais perto desta caixa atual
-                for p_mem in cache_pedras:
-                    cx_mem, cy_mem = p_mem['centro']
-                    dist = math.hypot(cx_mem - cx_nova, cy_mem - cy_nova)
-
-                    if dist < menor_distancia:
-                        menor_distancia = dist
-                        if dist < DISTANCIA_TOLERANCIA:
-                            pedra_reconhecida_memoria = p_mem
-
-                # 2. Decide se aproveita a memória ou se gasta CPU para recalcular
-                if pedra_reconhecida_memoria:
-                    # ACHOU NO MAPA: É a mesma pedra de antes! Copia o valor.
-                    valor_pedra = pedra_reconhecida_memoria['valor']
-                else:
-                    # LUGAR NOVO: Pedra recém-colocada (ou a mesa foi arrastada). Recalcula!
+                # Tratando de forma direta quando no modo de seleção da maõ do jogador
+                if modo_leitura != 'mesa':
+                    # Pega a contagem real
                     pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
+                    # Adiciona na lista que vai para a Web
+                    soma_pts = pts_cima + pts_baixo
+                    if soma_pts <= 2:
+                        if not validar_pedra_lisa(gray, d['rect_pedra']):
+                            # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
+                            # print(f"Pedra Rejeitada: {texto}")
+                            continue
                     valor_pedra = f"{pts_cima}|{pts_baixo}"
 
+                    if enviar_video:
+                        # --- DESENHA AS CAIXAS PARA A WEB VER ---
+                        box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
+                        cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
+                        box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
+                        cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
+
+                        # Opcional: Escreve o número da pedra lida na própria imagem
+                        cx, cy = int(d['centro'][0]), int(d['centro'][1])
+                        cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 20, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                else:
+
+                    cx_nova, cy_nova = d['centro']
+                    pedra_reconhecida_memoria = None
+                    menor_distancia = float('inf')
+
+                    # 1. Procura qual pedra da memória está mais perto desta caixa atual
+                    for p_mem in cache_pedras:
+                        cx_mem, cy_mem = p_mem['centro']
+                        dist = math.hypot(cx_mem - cx_nova, cy_mem - cy_nova)
+
+                        if dist < menor_distancia:
+                            menor_distancia = dist
+                            if dist < DISTANCIA_TOLERANCIA:
+                                pedra_reconhecida_memoria = p_mem
+
+                    # 2. Decide se aproveita a memória ou se gasta CPU para recalcular
+                    if pedra_reconhecida_memoria:
+                        # ACHOU NO MAPA: É a mesma pedra de antes! Copia o valor.
+                        valor_pedra = pedra_reconhecida_memoria['valor']
+                    else:
+                        # LUGAR NOVO: Pedra recém-colocada (ou a mesa foi arrastada). Recalcula!
+                        pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
+                        soma_pts = pts_cima + pts_baixo
+                        if soma_pts <= 2:
+                            if not validar_pedra_lisa(gray, d['rect_pedra']):
+                                # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
+                                # print(f"Pedra Rejeitada: {texto}")
+                                continue
+                        valor_pedra = f"{pts_cima}|{pts_baixo}"
+
                 # 3. Adiciona na lista de hoje (atualizando a coordenada exata para não haver "drift")
+
                 pedras_vistas_agora.append({
                     'centro': (cx_nova, cy_nova),
                     'rect_pedra': d['rect_pedra'],
@@ -346,18 +450,19 @@ def loop_da_camera():
 
             # 4. RECUPERAÇÃO DE FANTASMAS (Mão na frente da câmera)
             # Se uma pedra antiga não foi vista agora, mas tem tempo de vida, nós a mantemos viva
-            for p_mem in cache_pedras:
-                ja_vista = False
-                for p_agora in pedras_vistas_agora:
-                    # Verifica se o espaço dela já foi ocupado
-                    dist = math.hypot(p_mem['centro'][0] - p_agora['centro'][0], p_mem['centro'][1] - p_agora['centro'][1])
-                    if dist < DISTANCIA_TOLERANCIA:
-                        ja_vista = True
-                        break
+            if modo_leitura == 'mesa':
+                for p_mem in cache_pedras:
+                    ja_vista = False
+                    for p_agora in pedras_vistas_agora:
+                        # Verifica se o espaço dela já foi ocupado
+                        dist = math.hypot(p_mem['centro'][0] - p_agora['centro'][0], p_mem['centro'][1] - p_agora['centro'][1])
+                        if dist < DISTANCIA_TOLERANCIA:
+                            ja_vista = True
+                            break
 
-                if not ja_vista and (tempo_atual - p_mem['ultima_vez_vista']) <= TEMPO_MEMORIA:
-                    # Se ninguém tomou o lugar dela e ela ainda tem tempo, injeta ela de volta!
-                    pedras_vistas_agora.append(p_mem)
+                    if not ja_vista and (tempo_atual - p_mem['ultima_vez_vista']) <= TEMPO_MEMORIA:
+                        # Se ninguém tomou o lugar dela e ela ainda tem tempo, injeta ela de volta!
+                        pedras_vistas_agora.append(p_mem)
 
             # Atualiza o mapa oficial
             cache_pedras = pedras_vistas_agora
@@ -365,7 +470,6 @@ def loop_da_camera():
 
             lista_final = [p['valor'] for p in cache_pedras]
 
-            global ultima_leitura_pedras, ultimo_frame_processado, enviar_video
             ultima_leitura_pedras = lista_final
 
             # ONDE ESTAMOS A OLHAR?
@@ -376,11 +480,8 @@ def loop_da_camera():
                 # Só atualizamos se a leitura estiver estável (para evitar salvar ruído de movimento)
                 maos_jogadores[modo_leitura] = lista_final
 
-
             # --- OTIMIZAÇÃO: Só gasta CPU com desenhos e JPG se a página pedir! ---
             if enviar_video:
-                out = img.copy()
-                # Desenhamos usando a memória estrutural sólida
                 for p in cache_pedras:
                     box_traco = np.int32(cv2.boxPoints(p['rect_traco']))
                     cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
@@ -394,11 +495,6 @@ def loop_da_camera():
                     ultimo_frame_processado = buffer.tobytes()
             else:
                 ultimo_frame_processado = None
-            # --- A CORREÇÃO ESTÁ AQUI ---
-            # Avisamos ao Python que queremos modificar a variável global
-            # global ultima_leitura_pedras
-            # # Passamos os dados da thread da câmera para o Flask ver!
-            # ultima_leitura_pedras = lista_final
 
 # ====================================================================
 # ROTAS DA WEB (A API)
@@ -413,10 +509,10 @@ def gerar_frames():
 
             # ATENÇÃO AQUI: Forçar o streaming a rodar a ~10 FPS
             # Sem isso, ele tenta mandar frames na velocidade da luz e trava o PC!
-            time.sleep(0.3)
+            time.sleep(0.1)
         else:
             # Se ainda não houver foto, espera 0.1s e tenta de novo
-            time.sleep(0.3)
+            time.sleep(0.1)
 
 @app.route('/video_feed')
 def video_feed():
@@ -467,9 +563,14 @@ def api_mesa():
 
 @app.route('/api/set_modo', methods=['POST'])
 def set_modo():
-    global modo_leitura
+    global modo_leitura, tirar_foto_debug
     dados = request.get_json()
     modo_leitura = dados.get('modo', 'mesa')
+
+    # Se fomos ler a mão de alguém, armamos o gatilho da foto!
+    if modo_leitura != 'mesa':
+        tirar_foto_debug = True
+
     print(f"📷 Câmera redirecionada para ler: {modo_leitura.upper()}")
     return jsonify({"status": "sucesso", "modo": modo_leitura})
 
