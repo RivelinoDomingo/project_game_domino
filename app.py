@@ -4,6 +4,7 @@ import numpy as np
 import math
 import time # Precisamos importar o time
 import threading # Para rodar a câmera em segundo plano
+import atexit
 
 app = Flask(__name__)
 
@@ -16,16 +17,19 @@ camera = cv2.VideoCapture("http://192.168.1.135:5000/video?video_size=1920x1080"
 # camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
 # Variáveis globais para armazenar a última leitura da mesa
-zoom_factor = 0.8
+zoom_factor = 1.0
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
 INTERVALO_SEGUNDOS = 2.0 # Processa a mesa a cada 2 segundos
+executando_servidor = True
 enviar_video = True      # Começa ligado
-DISTANCIA_MINIMA = 30    # Distância minima entre as pedras
+DISTANCIA_MINIMA = 37    # Distância minima entre as pedras
 TEMPO_MEMORIA = 4.0
 cache_pedras = []
 modo_leitura = 'mesa'
+actions = {'action': 'none'}
+resetMaoPlayers = False
 tirar_foto_debug = False  # O nosso gatilho de foto debug
 maos_jogadores = {
     'p1': [], 'p2': [], 'p3': [], 'p4': []
@@ -33,6 +37,8 @@ maos_jogadores = {
 Zerou_mao = False
 estado_intervalo = False
 CP_INTERVALO_SEGUNDOS = 0
+ler_info = True
+modoAuto = False
 
 def ordenar_pontos(pts):
     # Inicializa uma lista de coordenadas que serão ordenadas
@@ -151,8 +157,8 @@ def validar_pedra_lisa(gray_img, rect_pedra):
     mean_c = cv2.meanStdDev(metade_cima)
     mean_b = cv2.meanStdDev(metade_baixo)
 
-    brilho_c = mean_c[0][0]
-    brilho_b = mean_b[0][0]
+    brilho_c = mean_c[0][0].item()
+    brilho_b = mean_b[0][0].item()
 
     # 5. A NOVA REGRA (Simetria de Brilho)
     diferenca_brilho = abs(brilho_c - brilho_b)
@@ -162,20 +168,88 @@ def validar_pedra_lisa(gray_img, rect_pedra):
     # 1. As duas metades têm de ser claras (> 100)
     # 2. A diferença de luz entre elas tem de ser pequena (< 40)
     # ========================================================
-    if (brilho_c > 100 and brilho_b > 100) and diferenca_brilho < 30:
+    if (brilho_c > 150 and brilho_b > 150) and diferenca_brilho < 30:
         return True
     else:
         # Imprime no terminal o MOTIVO da rejeição para você poder calibrar!
-        # print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) Dif: {diferenca_brilho:.0f}")
-        # print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) | Dif: {diferenca_brilho:.0f} | Text(C:{textura_c:.0f}, B:{textura_b:.0f})")
+        print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) Dif: {diferenca_brilho:.0f}")
         return False
 
 # ====================================================================
+def valor_ja_existe(valor_procurado, modo_atual, pedras_ja_vistas_neste_frame):
+    global maos_jogadores
+
+    # 1. Cria a versão invertida da pedra (ex: se buscou "6|5", também cria "5|6")
+    partes = valor_procurado.split('|')
+    valor_invertido = f"{partes[1]}|{partes[0]}"
+
+    # 2. EVITA DUPLICATAS NO MESMO FRAME (Fantasma na mesma leitura)
+    for p in pedras_ja_vistas_neste_frame:
+        if p['valor'] == valor_procurado or p['valor'] == valor_invertido:
+            return True
+
+    # 3. SE ESTIVERMOS LENDO A MESA: Nunca bloqueia!
+    # (As pedras jogadas TÊM que ser lidas pela mesa)
+    if modo_atual == 'mesa':
+        return False
+
+    # 4. EVITA ROUBAR PEDRA DOS OUTROS (Se for modo p1, p2, etc)
+    for player, pedras_da_mao in maos_jogadores.items():
+        # Só verifica as mãos dos OUTROS jogadores (não a dele mesmo)
+        if player != modo_atual:
+            if valor_procurado in pedras_da_mao or valor_invertido in pedras_da_mao:
+                return True
+
+    return False
+
+def processar_grupos(numeros, percentual_max=10, min_por_grupo=5, max_por_grupo=10):
+    """
+    Agrupa números próximos (dentro do percentual) e retorna as médias dos grupos válidos
+
+    Args:
+        numeros: lista de números
+        percentual_max: diferença máxima permitida em % (padrão: 10)
+        min_por_grupo: tamanho mínimo do grupo (padrão: 5)
+        max_por_grupo: tamanho máximo do grupo (padrão: 10)
+
+    Returns:
+        Lista com as médias dos grupos que atendem aos critérios
+    """
+    if not numeros:
+        return []
+
+    # Ordena os números
+    numeros_ordenados = sorted(numeros)
+    grupos = []
+    grupo_atual = [numeros_ordenados[0]]
+
+    # Primeira etapa: formar grupos baseado na diferença percentual
+    for i in range(1, len(numeros_ordenados)):
+        # Calcula diferença percentual em relação ao PRIMEIRO elemento do grupo
+        primeiro_do_grupo = grupo_atual[0]
+        diferenca_percentual = abs(numeros_ordenados[i] - primeiro_do_grupo) / primeiro_do_grupo * 100
+
+        if diferenca_percentual <= percentual_max and len(grupo_atual) < max_por_grupo:
+            grupo_atual.append(numeros_ordenados[i])
+        else:
+            # Salva o grupo atual se atender ao tamanho mínimo
+            if len(grupo_atual) >= min_por_grupo:
+                grupos.append(grupo_atual)
+            grupo_atual = [numeros_ordenados[i]]
+
+    # Adiciona o último grupo
+    if len(grupo_atual) >= min_por_grupo:
+        grupos.append(grupo_atual)
+
+    # Calcula as médias dos grupos
+    medias = [sum(grupo) / len(grupo) for grupo in grupos]
+
+    return medias
 
 def loop_da_camera():
-    global ultima_leitura_pedras, ultimo_tempo_processamento, camera
+    global ultima_leitura_pedras, ultimo_tempo_processamento, camera, executando_servidor, zoom_factor
 
-    while True:
+    while executando_servidor:
         sucesso, frame = camera.read()
         if not sucesso:
             print("Erro: Frame não processado.")
@@ -186,21 +260,30 @@ def loop_da_camera():
 
         tempo_atual = time.time()
 
-        global modo_leitura, maos_jogadores, DISTANCIA_MINIMA, INTERVALO_SEGUNDOS, tirar_foto_debug
+        global resetMaoPlayers, maos_jogadores
+
+        if resetMaoPlayers:
+            print("Mão está para ser resetada!!!")
+            resetMaoPlayers = False
+            actions['action'] = 'none'
+            for players in maos_jogadores:
+                maos_jogadores[players].clear()
+
+        global modo_leitura, DISTANCIA_MINIMA, INTERVALO_SEGUNDOS, tirar_foto_debug
         global Zerou_mao, CP_INTERVALO_SEGUNDOS, estado_intervalo
 
         if not estado_intervalo:
             CP_INTERVALO_SEGUNDOS = INTERVALO_SEGUNDOS
 
         if modo_leitura != 'mesa':
-            DISTANCIA_MINIMA = 10
+            DISTANCIA_MINIMA = 25
             estado_intervalo = True
             INTERVALO_SEGUNDOS = 0.4   ## Maior velocidade na identificação da pedra dos jogadores
             if not Zerou_mao:
                 maos_jogadores[modo_leitura] = None
                 Zerou_mao = True
         else:
-            DISTANCIA_MINIMA = 30
+            DISTANCIA_MINIMA = 37
             INTERVALO_SEGUNDOS = CP_INTERVALO_SEGUNDOS
             estado_intervalo = False
             Zerou_mao = False
@@ -209,14 +292,12 @@ def loop_da_camera():
         if tempo_atual - ultimo_tempo_processamento >= INTERVALO_SEGUNDOS:
             ultimo_tempo_processamento = tempo_atual
 
-            img = frame.copy()
-            if img is None:
-                print("Erro: Imagem não encontrada.")
-                return
             # --- APLICA O ZOOM DIGITAL ANTES DE TUDO ---
             if zoom_factor != 1.0:
                 # Interpolação LINEAR mantém a qualidade ao dar zoom
-                img = cv2.resize(img, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
+                img = cv2.resize(frame, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
+            else:
+                img = frame.copy()
 
             if tirar_foto_debug:
                 nome_arquivo = f"debug_mao_{modo_leitura}.jpeg"
@@ -239,9 +320,19 @@ def loop_da_camera():
 
             candidatos = []
 
+            maxLimite = 300
+            metricas = []
+            mediaFinal = None
+
+            global processar_grupos, modoAuto
+
+            if modoAuto:
+                maxLimite = 1000
+
+
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area < 20 or area > 300:
+                if area < 20 or area > maxLimite:
                     continue
 
                 rect = cv2.minAreaRect(cnt)
@@ -254,6 +345,8 @@ def loop_da_camera():
                 linha_espessura = min(w_box, h_box)
                 ratio = linha_comprimento / linha_espessura
 
+                metricas.append(linha_comprimento)
+
                 # --- A NOVA BLINDAGEM DE TAMANHO ---
                 # A sua pedra projetada tem 30px de largura.
                 # O traço costuma ter entre 15px e 26px.
@@ -263,7 +356,7 @@ def loop_da_camera():
                 LIMITE_EXPESSURA = 5
 
                 # Adicionamos os limites de comprimento no IF principal
-                if ratio > 2.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_EXPESSURA):
+                if ratio > 2.0 and not modoAuto and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_EXPESSURA):
 
                     if w_box > h_box:
                         rect_pedra = ((cx, cy), (30, 61), angle)
@@ -291,6 +384,38 @@ def loop_da_camera():
                             'centro': (cx, cy),
                             'brilho': brilho_medio  # Guardamos o brilho para o duelo final!
                         })
+
+            medias = processar_grupos(metricas)
+            for i in medias:
+                if i >= 7:
+                    # print(f"Valor médio de: {i}px")
+                    mediaFinal = i
+
+            TAMANHO_IDEAL = 24.0 # O tamanho que o seu algoritmo ama ler
+
+            if modoAuto and len(medias) > 0:
+                # Pega a média mais relevante (geralmente a maior ou a do grupo com mais itens)
+                # Vamos supor que a sua função retorna a lista de médias válidas
+                media_tracos = mediaFinal
+
+                if media_tracos >= 5: # Evita divisão por zero ou ruídos absurdos
+                    fator_correcao = TAMANHO_IDEAL / media_tracos
+
+                    # global zoom_factor
+                    zoom_factor = zoom_factor * fator_correcao
+
+                    print(f"🎯 Auto-Calibragem Concluída!")
+                    print(f"Traço atual: {media_tracos:.1f}px -> Alvo: {TAMANHO_IDEAL}px")
+                    print(f"Novo Zoom ajustado para: {zoom_factor:.2f}x")
+
+                    # Desliga o modo auto para o jogo normal continuar com o zoom perfeito!
+                    actions['action1'] = None
+                    modoAuto = False
+                    continue
+
+            # print(medias)
+            # cv2.imwrite("analise_auto.jpeg", img)
+
 
             # --- DUELO E FILTRO DE DISTÂNCIA ---
             # Ordenamos os candidatos do MAIS CLARO para o MAIS ESCURO.
@@ -364,7 +489,7 @@ def loop_da_camera():
             else:
                 pedras_aprovadas = []
 
-            print(f"Pedras únicas encontradas: {len(pedras_aprovadas)}")
+            print(f"Pedras encontradas: {len(pedras_aprovadas)}")
 
             # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
             pedras_aprovadas.sort(key=lambda x: x['centro'][1])
@@ -394,6 +519,7 @@ def loop_da_camera():
                         if not validar_pedra_lisa(gray, d['rect_pedra']):
                             # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
                             # print(f"Pedra Rejeitada: {texto}")
+                            pedras_aprovadas.remove(d)
                             continue
                     valor_pedra = f"{pts_cima}|{pts_baixo}"
 
@@ -433,20 +559,33 @@ def loop_da_camera():
                         soma_pts = pts_cima + pts_baixo
                         if soma_pts <= 2:
                             if not validar_pedra_lisa(gray, d['rect_pedra']):
+                                pedras_aprovadas.remove(d)
                                 # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
                                 # print(f"Pedra Rejeitada: {texto}")
                                 continue
                         valor_pedra = f"{pts_cima}|{pts_baixo}"
 
                 # 3. Adiciona na lista de hoje (atualizando a coordenada exata para não haver "drift")
+                if not valor_ja_existe(valor_pedra, modo_leitura, pedras_vistas_agora):
+                    pedras_vistas_agora.append({
+                        'centro': (cx_nova, cy_nova),
+                        'rect_pedra': d['rect_pedra'],
+                        'rect_traco': d['rect_traco'],
+                        'valor': valor_pedra,
+                        'ultima_vez_vista': tempo_atual
+                    })
+                else:
+                    # Imprime apenas se NÃO for a mesa para evitar poluir o log
+                    if modo_leitura != 'mesa':
+                        print(f"🚫 Duplicata rejeitada: {valor_pedra} (já pertence a outro ou lida duas vezes)")
+                        continue
 
-                pedras_vistas_agora.append({
-                    'centro': (cx_nova, cy_nova),
-                    'rect_pedra': d['rect_pedra'],
-                    'rect_traco': d['rect_traco'],
-                    'valor': valor_pedra,
-                    'ultima_vez_vista': tempo_atual
-                })
+            print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
+
+            global ler_info
+            if ler_info and modo_leitura != 'mesa':
+                print(pedras_vistas_agora)
+                ler_info = False
 
             # 4. RECUPERAÇÃO DE FANTASMAS (Mão na frente da câmera)
             # Se uma pedra antiga não foi vista agora, mas tem tempo de vida, nós a mantemos viva
@@ -466,9 +605,33 @@ def loop_da_camera():
 
             # Atualiza o mapa oficial
             cache_pedras = pedras_vistas_agora
-            # =================================================================
 
-            lista_final = [p['valor'] for p in cache_pedras]
+            for p in cache_pedras:
+                cx, cy = p['rect_pedra'][0]
+
+                # Desempacotamos a Largura (w) e a Altura (h)
+                w, h = p['rect_pedra'][1]
+
+                angulo_cv = p['rect_pedra'][2]
+
+                # --- A INTELIGÊNCIA DE ORIENTAÇÃO ---
+                # O CSS desenha as pedras "em pé" por padrão (0 graus).
+                if w < h:
+                    # Pedra EM PÉ. O OpenCV deu ~90 graus.
+                    # Subtraímos 90 para o CSS entender que é 0 graus (Vertical)
+                    angulo_corrigido = angulo_cv - 90
+                else:
+                    # Pedra DEITADA (ex: o 6|6). A largura é maior que a altura.
+                    # O OpenCV também deu ~90 graus, mas nós MANTEMOS os 90
+                    # para o CSS girar a pedra e deitá-la na tela!
+                    angulo_corrigido = angulo_cv
+
+                lista_final.append({
+                    'valor': p['valor'],
+                    'x': cx,
+                    'y': cy,
+                    'angulo': angulo_corrigido
+                })
 
             ultima_leitura_pedras = lista_final
 
@@ -478,7 +641,8 @@ def loop_da_camera():
             else:
                 # Se estivermos a escanear um jogador, salvamos as pedras na mão dele!
                 # Só atualizamos se a leitura estiver estável (para evitar salvar ruído de movimento)
-                maos_jogadores[modo_leitura] = lista_final
+                if len(lista_final) == 7:
+                    maos_jogadores[modo_leitura] = lista_final
 
             # --- OTIMIZAÇÃO: Só gasta CPU com desenhos e JPG se a página pedir! ---
             if enviar_video:
@@ -495,6 +659,32 @@ def loop_da_camera():
                     ultimo_frame_processado = buffer.tobytes()
             else:
                 ultimo_frame_processado = None
+
+    print("🔌 Cortando conexão com o IP Webcam suavemente...")
+    if camera.isOpened():
+        camera.release()
+    print("✅ Câmera liberada sem falhas!")
+
+# ====================================================================
+# ENCERRAMENTO SEGURO
+# ====================================================================
+# ====================================================================
+# ENCERRAMENTO SEGURO
+# ====================================================================
+def liberar_recursos():
+    global executando_servidor
+    print("\n🛑 Recebido sinal de parada! Avisando a câmera...")
+
+    # 1. Avisa a thread da câmera para parar o loop
+    executando_servidor = False
+
+    # 2. Espera meio segundo para a thread ter tempo de fechar o OpenCV
+    time.sleep(0.5)
+
+    print("🛑 Servidor encerrado.")
+
+# Registra a função para rodar automaticamente quando o app for fechado
+atexit.register(liberar_recursos)
 
 # ====================================================================
 # ROTAS DA WEB (A API)
@@ -573,6 +763,22 @@ def set_modo():
 
     print(f"📷 Câmera redirecionada para ler: {modo_leitura.upper()}")
     return jsonify({"status": "sucesso", "modo": modo_leitura})
+
+@app.route('/api/action_exec', methods=['POST'])
+def action_exec():
+    global actions, resetMaoPlayers, modoAuto, zoom_factor
+    dados = request.get_json()
+    actions['action'] = dados.get('action')
+    actions['action1'] = dados.get('action1')
+
+    # Se fomos ler a mão de alguém, armamos o gatilho da foto!
+    if actions['action'] == 'reset':
+        resetMaoPlayers = True
+
+    if actions['action1'] == 'calibrar':
+        modoAuto = True
+
+    return jsonify({"status": "sucesso", "zoom": zoom_factor})
 
 @app.route('/api/estado_jogo')
 def estado_jogo():

@@ -59,9 +59,9 @@
         }
 
         /* Posicionamento dos jogadores no Grid */
-        #area-p1 { grid-column: 2; grid-row: 3; } /* Embaixo */
+        #area-p3 { grid-column: 2; grid-row: 3; } /* Embaixo */
         #area-p2 { grid-column: 3; grid-row: 2; } /* Direita */
-        #area-p3 { grid-column: 2; grid-row: 1; } /* Em cima */
+        #area-p1 { grid-column: 2; grid-row: 1; } /* Em cima */
         #area-p4 { grid-column: 1; grid-row: 2; } /* Esquerda */
 
         #area-mesa {
@@ -144,6 +144,14 @@
             gap: 1px;
         }
 
+        .domino.jogada {
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.9); /* Sombra vermelha brilhante */
+            opacity: 0.4; /* Fica meio transparente */
+            border: 2px solid #e74c3c;
+            transform: scale(0.9); /* Encolhe um pouquinho para dar sensação de "usada" */
+            transition: all 0.3s ease;
+        }
+
         .traco { height: 2px; background-color: #2c3e50; width: 90%; margin: 1px auto; }
         .ponto { background-color: black; border-radius: 50%; width: 6px; height: 6px; place-self: center; }
         #area-mesa .ponto { width: 8px; height: 8px; }
@@ -172,8 +180,8 @@
         </div>
 
         <div class="config-group">
-            <label for="zoomSlider">🔍 Zoom: <span id="zoomValor">0.8</span>x</label>
-            <input type="range" id="zoomSlider" min="0.5" max="3.0" step="0.01" value="0.8">
+            <label for="zoomSlider">🔍 Zoom: <span id="zoomValor">1.0</span>x</label>
+            <input type="range" id="zoomSlider" min="0.5" max="3.0" step="0.01" value="1.0">
         </div>
 
         <div class="config-group">
@@ -189,6 +197,17 @@
         <button id="btnForcarMesa" style="width: 100%; padding: 10px; background: #e67e22; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
             Voltar Câmera para MESA
         </button>
+        <p>
+            <button id="btnResetMao" style="width: 100%; padding: 10px; background: #ff0000; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
+                Resetar mão dos Jogadores
+            </button>
+        </p>
+
+        <p>
+            <button id="btnAutoZoom" style="width: 100%; padding: 10px; background: #00ff7f; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
+                Auto calibrar zoom
+            </button>
+        </p>
     </div>
 
     <h1>VAR do Dominó Oficial 🎲</h1>
@@ -197,7 +216,7 @@
 
         <div class="area-jogador" id="area-p4">
             <div class="header-jogador">
-                <span>P4 (Esquerda)</span>
+                <span>Jogador 4</span>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p4')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p4"></div>
@@ -205,7 +224,7 @@
 
         <div class="area-jogador" id="area-p3">
             <div class="header-jogador">
-                <span>P3 (Topo)</span>
+                <span>Jogador 3</span>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p3')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p3"></div>
@@ -218,7 +237,7 @@
 
         <div class="area-jogador" id="area-p2">
             <div class="header-jogador">
-                <span>P2 (Direita)</span>
+                <span>Jogador 2</span>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p2')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p2"></div>
@@ -226,11 +245,13 @@
 
         <div class="area-jogador" id="area-p1">
             <div class="header-jogador">
-                <span>P1 (Você)</span>
+                <span>Jogador 1</span>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p1')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p1"></div>
         </div>
+
+
 
     </div>
 
@@ -273,6 +294,68 @@
         document.getElementById('btnForcarMesa').addEventListener('click', () => {
             fetch('/api/set_modo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modo: 'mesa' }) });
             atualizarBotoesScan('mesa');
+
+            // Opcional: Mostrar feedback visual
+            const btn = document.getElementById('btnForcarMesa');
+            const textoOriginal = btn.textContent;
+            btn.textContent = '✅ Restaurando visão da mesa!';
+            setTimeout(() => {
+                btn.textContent = textoOriginal;
+            }, 2000);
+        });
+
+        document.getElementById('btnResetMao').addEventListener('click', () => {
+        // 2. Pedido de Confirmação
+            const confirmacao = confirm(`⚠️ ATENÇÃO: Tem certeza que deseja excluir as mãos dos Jogadores? Isso não poderá ser desfeito!!`);
+
+            if (confirmacao) {
+                fetch('/api/action_exec', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'reset' })
+                });
+            }
+        });
+
+        document.getElementById('btnAutoZoom').addEventListener('click', async () => {
+            try {
+                // Faz apenas UMA chamada, enviando o comando 'calibrar'
+                const resposta = await fetch('/api/action_exec', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action1: 'calibrar' })
+                });
+
+                const actions_result = await resposta.json();
+                // console.log('Resposta completa:', actions_result);
+                // console.log('Zoom atual:', actions_result.zoom);
+
+                // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
+                if (actions_result.zoom !== undefined) {
+                    const zoomSlider = document.getElementById('zoomSlider');
+                    const zoomValor = document.getElementById('zoomValor');
+
+                    // Atualiza o valor do slider
+                    zoomSlider.value = actions_result.zoom.toFixed(3);
+
+                    // Atualiza o texto exibido
+                    zoomValor.innerText = actions_result.zoom.toFixed(3);
+
+                    // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
+
+                    // Opcional: Mostrar feedback visual
+                    const btn = document.getElementById('btnAutoZoom');
+                    const textoOriginal = btn.textContent;
+                    btn.textContent = '✅ Zoom Calibrado!';
+                    setTimeout(() => {
+                        btn.textContent = textoOriginal;
+                    }, 2000);
+                }
+
+            } catch (error) {
+                console.error('Erro:', error);
+                alert('Erro ao calibrar zoom: ' + error.message);
+            }
         });
 
         // ==========================================
@@ -294,19 +377,192 @@
             return html;
         }
 
-        function renderizarDominos(listaPedrasStr, containerId) {
+        // ==========================================
+        // LÓGICA DE RENDERIZAÇÃO
+        // ==========================================
+
+        // 1. Renderiza as mãos dos jogadores (Em linha, organizadas)
+        function renderizarMaoJogador(listaPedras, containerId, listaMesa) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
 
-            if (!listaPedrasStr || listaPedrasStr.length === 0) {
-                if(containerId === 'pedras-mesa') container.innerHTML = '<span style="color:#bdc3c7;">Mesa vazia.</span>';
+            if (!listaPedras || listaPedras.length === 0) return;
+
+            // --- A MÁGICA DA VERIFICAÇÃO ---
+            // Cria um catálogo rápido de tudo o que está na mesa
+            const pedrasNaMesa = new Set();
+            if (listaMesa) {
+                listaMesa.forEach(p => {
+                    const partes = p.valor.split('|');
+                    // Guarda as duas versões para não ser enganado pela rotação!
+                    pedrasNaMesa.add(`${partes[0]}|${partes[1]}`);
+                    pedrasNaMesa.add(`${partes[1]}|${partes[0]}`);
+                });
+            }
+
+            listaPedras.forEach(pedraObj => {
+                const partes = pedraObj.valor.split('|');
+
+                // Se a pedra que estamos a desenhar existe no catálogo da mesa...
+                const jaFoiJogada = pedrasNaMesa.has(pedraObj.valor);
+
+                // ...adicionamos a classe vermelha nela!
+                const classeCSS = jaFoiJogada ? 'domino jogada' : 'domino';
+
+                const dominoHtml = `
+                    <div class="${classeCSS}" style="position: relative;">
+                        <div class="metade">${gerarPontos(partes[0])}</div>
+                        <div class="traco"></div>
+                        <div class="metade">${gerarPontos(partes[1])}</div>
+                    </div>
+                `;
+                container.innerHTML += dominoHtml;
+            });
+        }
+
+        // 2. Renderiza a MESA REAL (Usando Coordenadas Espaciais)
+        function renderizarMesaFisica(listaPedras) {
+            const container = document.getElementById('pedras-mesa');
+            container.innerHTML = '';
+
+            if (!listaPedras || listaPedras.length === 0) {
+                container.innerHTML = '<span style="color:#bdc3c7;">Mesa vazia.</span>';
+                container.style.height = 'auto';
                 return;
             }
 
-            listaPedrasStr.forEach(pedra_str => {
-                const partes = pedra_str.split('|');
+            container.style.position = 'relative';
+            container.style.height = '600px'; // Aumentei um pouco a altura da mesa
+            container.style.display = 'block';
+
+            let minX = Infinity, minY = Infinity;
+            listaPedras.forEach(p => {
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+            });
+
+            // FATOR DE ESCALA:
+            // A distância entre pedras no OpenCV é ~60px.
+            // O nosso dominó CSS tem 100px.
+            // Multiplicar por 1.6 ou 1.7 afasta as coordenadas na proporção perfeita!
+            const fatorEscala = 1.6;
+
+            listaPedras.forEach(pedraObj => {
+                const partes = pedraObj.valor.split('|');
+
+                // Aplica a escala e dá uma margem inicial (100px) para não colar na borda
+                const posicaoX = (pedraObj.x - minX) * fatorEscala + 100;
+                const posicaoY = (pedraObj.y - minY) * fatorEscala + 100;
+
+                // O OpenCV e o CSS lidam com ângulos de forma diferente.
+                // Se as pedras ficarem atravessadas/deitadas, mude para: pedraObj.angulo - 90
+                angle_usage = -90;
+                if (pedraObj.angulo >= 80) {
+                    angle_usage = -90
+                }else{
+                    angle_usage = 90
+                }
+                const anguloCSS = pedraObj.angulo + angle_usage;
+
+                // A MÁGICA ESTÁ AQUI NO TRANSFORM: translate(-50%, -50%)
                 const dominoHtml = `
-                    <div class="domino">
+                    <div class="domino" style="
+                        position: absolute;
+                        left: ${posicaoX}px;
+                        top: ${posicaoY}px;
+                        transform: translate(-50%, -50%) rotate(${anguloCSS}deg);
+                    ">
+                        <div class="metade">${gerarPontos(partes[0])}</div>
+                        <div class="traco"></div>
+                        <div class="metade">${gerarPontos(partes[1])}</div>
+                    </div>
+                `;
+                container.innerHTML += dominoHtml;
+            });
+        }
+
+        function renderizarMesaFisica(listaPedras) {
+            const container = document.getElementById('pedras-mesa');
+            container.innerHTML = '';
+
+            if (!listaPedras || listaPedras.length === 0) {
+                container.innerHTML = '<span style="color:#bdc3c7;">Mesa vazia.</span>';
+                container.style.height = 'auto';
+                return;
+            }
+
+            container.style.position = 'relative';
+            container.style.height = '500px'; // Altura fixa da arena
+            container.style.display = 'block';
+            container.style.overflow = 'hidden'; // Impede que o desenho transborde a div
+
+            // 1. Descobre a Borda Extrema do Jogo (Bounding Box)
+            let minX = Infinity, minY = Infinity;
+            let maxX = -Infinity, maxY = -Infinity;
+
+            listaPedras.forEach(p => {
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y > maxY) maxY = p.y;
+            });
+
+            // Qual é o comprimento total da cobra de dominós na vida real?
+            const spanX = maxX - minX;
+            const spanY = maxY - minY;
+
+            // 2. Configurações da Mesa Web
+            const fatorBase = 1.6; // O nosso distanciamento natural das pedras
+            const mesaW = container.clientWidth || 800; // Largura do quadro verde
+            const mesaH = container.clientHeight || 500; // Altura do quadro verde
+
+            // 3. O CÁLCULO DE AUTO-FIT (ZOOM AUTOMÁTICO)
+            // Calculamos quanto espaço a cobra ocuparia no tamanho normal (com margem de 150px)
+            const larguraNecessaria = (spanX * fatorBase) + 150;
+            const alturaNecessaria  = (spanY * fatorBase) + 150;
+
+            // Verificamos qual lado estourou o limite e calculamos a percentagem de encolhimento
+            let escalaAuto = Math.min(mesaW / larguraNecessaria, mesaH / alturaNecessaria);
+
+            // Travas de segurança: Não deixa o dominó ficar gigante (1.2) nem minúsculo (0.2)
+            if (escalaAuto > 1.2) escalaAuto = 1.2;
+            if (escalaAuto < 0.2) escalaAuto = 0.2;
+
+            // Fator final que ajusta a distância entre as pedras
+            const fatorFinal = fatorBase * escalaAuto;
+
+            // 4. CENTRALIZAÇÃO DA MESA (Para não ficar presa no canto esquerdo)
+            const larguraReal = spanX * fatorFinal;
+            const alturaReal = spanY * fatorFinal;
+
+            // Empurra as coordenadas em X e Y para o centro exato da tela!
+            const offsetX = (mesaW - larguraReal) / 2;
+            const offsetY = (mesaH - alturaReal) / 2;
+
+            // 5. Desenhando as pedras com a nova física
+            listaPedras.forEach(pedraObj => {
+                const partes = pedraObj.valor.split('|');
+
+                // Aplica o distanciamento comprimido e o deslocamento para o centro
+                const posicaoX = (pedraObj.x - minX) * fatorFinal + offsetX;
+                const posicaoY = (pedraObj.y - minY) * fatorFinal + offsetY;
+
+                angle_usage = -90;
+                if (pedraObj.angulo >= 80) {
+                    angle_usage = -90
+                }else{
+                    angle_usage = 90
+                }
+                const anguloCSS = pedraObj.angulo + angle_usage;
+
+                // A GRANDE MÁGICA: Usamos scale(${escalaAuto}) no CSS para encolher o HTML da própria pedra!
+                const dominoHtml = `
+                    <div class="domino" style="
+                        position: absolute;
+                        left: ${posicaoX}px;
+                        top: ${posicaoY}px;
+                        transform: translate(-50%, -50%) rotate(${anguloCSS}deg) scale(${escalaAuto});
+                    ">
                         <div class="metade">${gerarPontos(partes[0])}</div>
                         <div class="traco"></div>
                         <div class="metade">${gerarPontos(partes[1])}</div>
@@ -345,12 +601,15 @@
                 const resposta = await fetch('/api/estado_jogo');
                 const dados = await resposta.json();
 
-                // 1. Renderiza a Mesa
-                renderizarDominos(dados.mesa, 'pedras-mesa');
 
-                // 2. Renderiza os Jogadores
+
+                // Renderiza a mesa usando o "Mapa Físico"
+                renderizarMesaFisica(dados.mesa);
+                // console.log(dados.mesa);
+
+                // Renderiza os Jogadores usando o "Alinhamento Normal"
                 ['p1', 'p2', 'p3', 'p4'].forEach(jogador => {
-                    renderizarDominos(dados.jogadores[jogador], `pedras-${jogador}`);
+                    renderizarMaoJogador(dados.jogadores[jogador], `pedras-${jogador}`, dados.mesa);
 
                     // 3. Regra do Sino: Se leu 7 pedras do jogador atual
                     if (dados.modo_atual === jogador && dados.jogadores[jogador].length === 7) {

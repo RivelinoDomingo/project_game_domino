@@ -7,8 +7,14 @@ import argparse
 parser = argparse.ArgumentParser(description='Processa imagens')
 parser.add_argument('imagem', help='Caminho para o arquivo de imagem')
 parser.add_argument('-z', '--zoom', type=float, help='Valor float para nivel de zoom da imagem, padrão 0.8')
+parser.add_argument('-p', '--proximidade', type=int, help='Distancia minima entre as pedras padrão 30')
 args = parser.parse_args()
+
 zoom_factor = args.zoom
+DISTANCIA_MINIMA = args.proximidade
+
+if args.proximidade is None:
+    DISTANCIA_MINIMA = 37
 
 if zoom_factor is None:
         zoom_factor = 0.8
@@ -97,7 +103,7 @@ def pipeline_blackhat(img_path):
     # PASSO 1: Remover Duplicatas (Caixas na mesma pedra)
     # ==========================================
     pedras_unicas = []
-    DISTANCIA_MINIMA = 30
+    global DISTANCIA_MINIMA
 
     for cand in candidatos:
         cx1, cy1 = cand['centro']
@@ -162,7 +168,7 @@ def pipeline_blackhat(img_path):
     else:
         pedras_aprovadas = []
 
-    print(f"Pedras únicas encontradas: {len(pedras_aprovadas)}")
+    print(f"Pedras encontradas: {len(pedras_aprovadas)}")
 
     # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
     pedras_aprovadas.sort(key=lambda x: x['centro'][1])
@@ -177,6 +183,7 @@ def pipeline_blackhat(img_path):
             if not validar_pedra_lisa(gray, d['rect_pedra']):
                 # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
                 print(f"Pedra Rejeitada: {texto}")
+                pedras_aprovadas.remove(d)
                 continue
         box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
         cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
@@ -194,6 +201,7 @@ def pipeline_blackhat(img_path):
 
         print(f"Pedra encontrada: {texto}")
 
+    print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
     cv2.imshow("Mascara Limpa (Blackhat)", mask_soldada)
     cv2.imshow("Resultado Final Limpo", out)
     cv2.waitKey(0)
@@ -244,8 +252,8 @@ def validar_pedra_lisa(gray_img, rect_pedra):
     mean_c = cv2.meanStdDev(metade_cima)
     mean_b = cv2.meanStdDev(metade_baixo)
 
-    brilho_c = mean_c[0][0]
-    brilho_b = mean_b[0][0]
+    brilho_c = mean_c[0][0].item()
+    brilho_b = mean_b[0][0].item()
 
     # 5. A NOVA REGRA (Simetria de Brilho)
     diferenca_brilho = abs(brilho_c - brilho_b)
