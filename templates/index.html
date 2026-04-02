@@ -39,10 +39,11 @@
            ========================================= */
         #arena {
             display: grid;
-            grid-template-columns: 250px 1fr 250px; /* Esquerda, Centro, Direita */
-            grid-template-rows: auto 1fr auto;      /* Topo, Centro, Base */
+            /* Aumentamos as colunas laterais de 250px para 350px */
+            grid-template-columns: 350px 1fr 350px;
+            grid-template-rows: auto 1fr auto;
             gap: 20px;
-            max-width: 1400px;
+            max-width: 1500px;
             margin: 0 auto;
             min-height: 80vh;
         }
@@ -81,11 +82,50 @@
         .header-jogador {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start; /* Alinha pelo topo agora */
             width: 100%;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
             border-bottom: 1px solid #7f8c8d;
-            padding-bottom: 5px;
+            padding-bottom: 10px;
+        }
+
+        .info-placar {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 5px;
+        }
+
+        .nome-jogador {
+            font-size: 18px;
+            font-weight: bold;
+            color: #ecf0f1;
+            text-transform: uppercase;
+        }
+
+        .bolinhas-container {
+            display: flex;
+            gap: 4px;
+        }
+
+        .bolinha-placar {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background-color: #7f8c8d; /* Cinza (Padrão) */
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .bolinha-placar.ativa {
+            background-color: #f1c40f; /* Amarelo (Ponto marcado) */
+            box-shadow: 0 0 8px rgba(241, 196, 15, 0.8), inset 0 1px 2px rgba(255,255,255,0.5);
+        }
+
+        .extras-placar {
+            font-size: 14px;
+            color: #bdc3c7;
+            display: flex;
+            gap: 10px;
         }
 
         .btn-scan {
@@ -114,6 +154,62 @@
             justify-content: center;
             min-height: 60px;
             width: 100%;
+        }
+
+        /* =========================================
+        POPUP DE AVISO (TOAST NOTIFICATION)
+        ========================================= */
+        .toast-notification {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background-color: #e74c3c;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 2000;
+            transform: translateX(400px);
+            transition: transform 0.3s ease-in-out;
+            font-weight: bold;
+            max-width: 350px;
+            border-left: 5px solid #c0392b;
+        }
+
+        .toast-notification.show {
+            transform: translateX(0);
+        }
+
+        .toast-icon {
+            font-size: 24px;
+        }
+
+        .toast-content {
+            flex: 1;
+        }
+
+        .toast-title {
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+
+        .toast-message {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .toast-close {
+            cursor: pointer;
+            font-size: 20px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+
+        .toast-close:hover {
+            opacity: 1;
         }
 
         /* =========================================
@@ -216,7 +312,11 @@
 
         <div class="area-jogador" id="area-p4">
             <div class="header-jogador">
-                <span>Jogador 4</span>
+                <div class="info-placar">
+                    <span class="nome-jogador" id="nome-p4">Carregando...</span>
+                    <div class="bolinhas-container" id="bolinhas-p4"></div>
+                    <div class="extras-placar" id="extras-p4"></div>
+                </div>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p4')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p4"></div>
@@ -224,7 +324,11 @@
 
         <div class="area-jogador" id="area-p3">
             <div class="header-jogador">
-                <span>Jogador 3</span>
+                <div class="info-placar">
+                    <span class="nome-jogador" id="nome-p3">Carregando...</span>
+                    <div class="bolinhas-container" id="bolinhas-p3"></div>
+                    <div class="extras-placar" id="extras-p3"></div>
+                </div>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p3')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p3"></div>
@@ -237,7 +341,11 @@
 
         <div class="area-jogador" id="area-p2">
             <div class="header-jogador">
-                <span>Jogador 2</span>
+                <div class="info-placar">
+                    <span class="nome-jogador" id="nome-p2">Carregando...</span>
+                    <div class="bolinhas-container" id="bolinhas-p2"></div>
+                    <div class="extras-placar" id="extras-p2"></div>
+                </div>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p2')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p2"></div>
@@ -245,7 +353,11 @@
 
         <div class="area-jogador" id="area-p1">
             <div class="header-jogador">
-                <span>Jogador 1</span>
+                <div class="info-placar">
+                    <span class="nome-jogador" id="nome-p1">Carregando...</span>
+                    <div class="bolinhas-container" id="bolinhas-p1"></div>
+                    <div class="extras-placar" id="extras-p1"></div>
+                </div>
                 <button class="btn-scan" onclick="iniciarEscaneamento('p1')">[+] Escanear</button>
             </div>
             <div class="container-pedras" id="pedras-p1"></div>
@@ -254,6 +366,19 @@
 
 
     </div>
+
+    <!-- Popup de aviso de duplicata -->
+    <div id="toastDuplicata" class="toast-notification">
+        <div class="toast-icon">⚠️</div>
+        <div class="toast-content">
+            <div class="toast-title">Pedra Duplicada Detectada!</div>
+            <div class="toast-message" id="toastMessage"></div>
+        </div>
+        <div class="toast-close" onclick="fecharToast()">✖</div>
+    </div>
+
+    <!-- Som para duplicata (opcional) -->
+    <audio id="somErro" src="https://assets.mixkit.co/active_storage/sfx/2870/2870-preview.mp3" preload="auto"></audio>
 
     <script>
         // ==========================================
@@ -420,7 +545,6 @@
             });
         }
 
-        // 2. Renderiza a MESA REAL (Usando Coordenadas Espaciais)
         function renderizarMesaFisica(listaPedras) {
             const container = document.getElementById('pedras-mesa');
             container.innerHTML = '';
@@ -432,67 +556,7 @@
             }
 
             container.style.position = 'relative';
-            container.style.height = '600px'; // Aumentei um pouco a altura da mesa
-            container.style.display = 'block';
-
-            let minX = Infinity, minY = Infinity;
-            listaPedras.forEach(p => {
-                if (p.x < minX) minX = p.x;
-                if (p.y < minY) minY = p.y;
-            });
-
-            // FATOR DE ESCALA:
-            // A distância entre pedras no OpenCV é ~60px.
-            // O nosso dominó CSS tem 100px.
-            // Multiplicar por 1.6 ou 1.7 afasta as coordenadas na proporção perfeita!
-            const fatorEscala = 1.6;
-
-            listaPedras.forEach(pedraObj => {
-                const partes = pedraObj.valor.split('|');
-
-                // Aplica a escala e dá uma margem inicial (100px) para não colar na borda
-                const posicaoX = (pedraObj.x - minX) * fatorEscala + 100;
-                const posicaoY = (pedraObj.y - minY) * fatorEscala + 100;
-
-                // O OpenCV e o CSS lidam com ângulos de forma diferente.
-                // Se as pedras ficarem atravessadas/deitadas, mude para: pedraObj.angulo - 90
-                angle_usage = -90;
-                if (pedraObj.angulo >= 80) {
-                    angle_usage = -90
-                }else{
-                    angle_usage = 90
-                }
-                const anguloCSS = pedraObj.angulo + angle_usage;
-
-                // A MÁGICA ESTÁ AQUI NO TRANSFORM: translate(-50%, -50%)
-                const dominoHtml = `
-                    <div class="domino" style="
-                        position: absolute;
-                        left: ${posicaoX}px;
-                        top: ${posicaoY}px;
-                        transform: translate(-50%, -50%) rotate(${anguloCSS}deg);
-                    ">
-                        <div class="metade">${gerarPontos(partes[0])}</div>
-                        <div class="traco"></div>
-                        <div class="metade">${gerarPontos(partes[1])}</div>
-                    </div>
-                `;
-                container.innerHTML += dominoHtml;
-            });
-        }
-
-        function renderizarMesaFisica(listaPedras) {
-            const container = document.getElementById('pedras-mesa');
-            container.innerHTML = '';
-
-            if (!listaPedras || listaPedras.length === 0) {
-                container.innerHTML = '<span style="color:#bdc3c7;">Mesa vazia.</span>';
-                container.style.height = 'auto';
-                return;
-            }
-
-            container.style.position = 'relative';
-            container.style.height = '500px'; // Altura fixa da arena
+            container.style.height = '430px'; // Altura fixa da arena
             container.style.display = 'block';
             container.style.overflow = 'hidden'; // Impede que o desenho transborde a div
 
@@ -513,7 +577,7 @@
 
             // 2. Configurações da Mesa Web
             const fatorBase = 1.6; // O nosso distanciamento natural das pedras
-            const mesaW = container.clientWidth || 800; // Largura do quadro verde
+            const mesaW = container.clientWidth || 1000; // Largura do quadro verde
             const mesaH = container.clientHeight || 500; // Altura do quadro verde
 
             // 3. O CÁLCULO DE AUTO-FIT (ZOOM AUTOMÁTICO)
@@ -596,28 +660,85 @@
 
         let modoAtualAnterior = 'mesa';
 
+        // ==========================================
+        // SISTEMA DE POPUP DE DUPLICATA
+        // ==========================================
+        let timeoutToast = null;
+        let ultimaDuplicata = null;  // Para evitar repetir o mesmo aviso várias vezes
+
+        function mostrarToast(mensagem) {
+            const toast = document.getElementById('toastDuplicata');
+            const toastMessage = document.getElementById('toastMessage');
+
+            // Se a mensagem for a mesma da última vez, não mostra de novo (evita spam)
+            if (ultimaDuplicata === mensagem) {
+                return;
+            }
+            ultimaDuplicata = mensagem;
+
+            // Define a mensagem
+            toastMessage.textContent = mensagem;
+
+            // Mostra o toast
+            toast.classList.add('show');
+
+            // Toca o som de erro
+            const somErro = document.getElementById('somErro');
+            if (somErro) {
+                somErro.play().catch(e => console.log('Som não pode ser reproduzido'));
+            }
+
+            // Remove o timeout anterior se existir
+            if (timeoutToast) {
+                clearTimeout(timeoutToast);
+            }
+
+            // Auto-esconde após 4 segundos
+            timeoutToast = setTimeout(() => {
+                fecharToast();
+            }, 4000);
+        }
+
+        function fecharToast() {
+            const toast = document.getElementById('toastDuplicata');
+            toast.classList.remove('show');
+            timeoutToast = null;
+            // Reseta a última mensagem após fechar (opcional)
+            setTimeout(() => {
+                ultimaDuplicata = null;
+            }, 500);
+        }
+
+        // Modifique a função loopDoJogo para incluir a verificação de duplicata
         async function loopDoJogo() {
             try {
                 const resposta = await fetch('/api/estado_jogo');
                 const dados = await resposta.json();
 
-
+                // 🔥 VERIFICA SE HOUVE DUPLICATA E MOSTRA POPUP
+                if (dados.duplicada && dados.duplicada !== 'null' && dados.duplicada !== null) {
+                    mostrarToast(dados.duplicada);
+                    console.log(dados.duplicada);
+                }
 
                 // Renderiza a mesa usando o "Mapa Físico"
                 renderizarMesaFisica(dados.mesa);
-                // console.log(dados.mesa);
 
                 // Renderiza os Jogadores usando o "Alinhamento Normal"
                 ['p1', 'p2', 'p3', 'p4'].forEach(jogador => {
-                    renderizarMaoJogador(dados.jogadores[jogador], `pedras-${jogador}`, dados.mesa);
+                    if (dados.jogadores[jogador]) {
+                        renderizarMaoJogador(dados.jogadores[jogador], `pedras-${jogador}`, dados.mesa);
+                    }
 
-                    // 3. Regra do Sino: Se leu 7 pedras do jogador atual
-                    if (dados.modo_atual === jogador && dados.jogadores[jogador].length === 7) {
+                    // Regra do Sino: Se leu 7 pedras do jogador atual
+                    if (dados.modo_atual === jogador && dados.jogadores[jogador] && dados.jogadores[jogador].length === 7) {
                         document.getElementById('somSucesso').play();
 
                         // Força a câmera voltar para a mesa
                         fetch('/api/set_modo', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modo: 'mesa' })
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ modo: 'mesa' })
                         });
                         alert(`Mão do Jogador ${jogador.toUpperCase()} validada com sucesso!`);
                     }
@@ -633,6 +754,58 @@
                 console.error("Erro na comunicação com o VAR:", error);
             }
         }
+
+        // ==========================================
+        // INTEGRAÇÃO COM O FIREBASE (PLACAR DOMINÓ)
+        // ==========================================
+        const URL_FIREBASE = "https://firestore.googleapis.com/v1/projects/placar-domino/databases/(default)/documents/hardware/display";
+
+        async function sincronizarPlacarFirebase() {
+            try {
+                const resposta = await fetch(URL_FIREBASE);
+                const json = await resposta.json();
+
+                if (!json || !json.fields) return;
+
+                const campos = json.fields;
+
+                // Faz o loop para os 4 jogadores
+                for (let i = 1; i <= 4; i++) {
+                    // Extração segura dos dados (Lida com o fato do JSON ter stringValue e integerValue)
+                    const nome = campos[`nome${i}`] ? `Jogador${i} - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
+                    const pontos = campos[`jogador${i}`] ? parseInt(campos[`jogador${i}`].integerValue) : 0;
+                    const raios = campos[`raios${i}`] ? parseInt(campos[`raios${i}`].integerValue) : 0;
+                    const lambretas = campos[`lambretas${i}`] ? parseInt(campos[`lambretas${i}`].integerValue) : 0;
+
+                    // 1. Atualiza o Nome
+                    document.getElementById(`nome-p${i}`).innerText = nome;
+
+                    // 2. Atualiza as 6 Bolinhas (Pinta de amarelo as ativas)
+                    let htmlBolinhas = '';
+                    const totalPontosPartida = 4; // O padrão do dominó até bater
+                    for (let b = 1; b <= totalPontosPartida; b++) {
+                        const classeAtiva = b <= pontos ? 'ativa' : '';
+                        htmlBolinhas += `<div class="bolinha-placar ${classeAtiva}"></div>`;
+                    }
+                    document.getElementById(`bolinhas-p${i}`).innerHTML = htmlBolinhas;
+
+                    // 3. Atualiza os Ícones (Raios e Lambretas)
+                    let htmlExtras = '';
+                    if (raios > 0) htmlExtras += `<span title="Raios">⚡ ${raios}</span>`;
+                    if (lambretas > 0) htmlExtras += `<span title="Lambretas">🛵 ${lambretas}</span>`;
+                    document.getElementById(`extras-p${i}`).innerHTML = htmlExtras;
+                }
+
+            } catch (error) {
+                console.error("Erro ao sincronizar com o Firebase:", error);
+            }
+        }
+
+        // Chama a primeira vez imediatamente
+        sincronizarPlacarFirebase();
+
+        // Coloque para atualizar o Firebase a cada 3 segundos (para não sobrecarregar a API do Google)
+        setInterval(sincronizarPlacarFirebase, 3000);
 
         // Roda o loop do HTML a cada 1 segundo
         setInterval(loopDoJogo, 1000);
