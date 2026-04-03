@@ -769,13 +769,19 @@
 
                 const campos = json.fields;
 
+                const active = campos[`status`].stringValue;
+                console.log(active);
+
                 // Faz o loop para os 4 jogadores
                 for (let i = 1; i <= 4; i++) {
+
                     // Extração segura dos dados (Lida com o fato do JSON ter stringValue e integerValue)
                     const nome = campos[`nome${i}`] ? `Jogador${i} - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
                     const pontos = campos[`jogador${i}`] ? parseInt(campos[`jogador${i}`].integerValue) : 0;
                     const raios = campos[`raios${i}`] ? parseInt(campos[`raios${i}`].integerValue) : 0;
                     const lambretas = campos[`lambretas${i}`] ? parseInt(campos[`lambretas${i}`].integerValue) : 0;
+
+
 
                     // 1. Atualiza o Nome
                     document.getElementById(`nome-p${i}`).innerText = nome;

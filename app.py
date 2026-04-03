@@ -11,7 +11,7 @@ app = Flask(__name__)
 # Variáveis globais para armazenar a última leitura da mesa
 # device = 'http://192.168.1.135:4747/video' # Para Droidcam
 # camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
-device = 'http://192.168.1.135:5000/video?video_size=1920x1080'  # Para Ip WebCam
+device = 'http://192.168.1.101:5000/video?video_size=1920x1080'  # Para Ip WebCam
 camera = cv2.VideoCapture(device)
 
 
@@ -366,7 +366,9 @@ def loop_da_camera():
                 ratio = linha_comprimento / linha_espessura
 
                 if modoAuto:
-                    metricas.append(linha_comprimento)
+                    if ratio > 2.0:
+                    # if ratio > 2.0 and linha_espessura < 15:
+                        metricas.append(linha_comprimento)
 
                 # --- A NOVA BLINDAGEM DE TAMANHO ---
 
@@ -401,14 +403,15 @@ def loop_da_camera():
                         })
 
             # Auto calibração
-            medias = processar_grupos(metricas)
-            for i in medias:
-                if i >= 7:
-                    # print(f"Valor médio de: {i}px")
-                    mediaFinal = i
-            if len(medias) > 0:
-                LIMITE_MAX_TRACO = mediaFinal + 4
-                LIMITE_MIN_TRACO = mediaFinal - 4
+            mediaFinal = 0
+            medias = []
+            if modo_leitura:
+                medias = processar_grupos(metricas)
+
+                for i in medias:
+                    if i >= 7:
+                        # print(f"Valor médio de: {i}px")
+                        mediaFinal = i
 
             TAMANHO_IDEAL = 24.0 # O tamanho que o algoritmo ama ler
 
@@ -423,7 +426,7 @@ def loop_da_camera():
                 zoom_factor = zoom_factor * fator_correcao
 
                 print(f"🎯 Auto-Calibragem Concluída!")
-                print(f"Traço atual: {media_tracos:.1f}px -> Alvo: {TAMANHO_IDEAL}px")
+                print(f"Traço atual: {media_tracos:.1f} -> Alvo: {TAMANHO_IDEAL}")
                 print(f"Novo Zoom ajustado para: {zoom_factor:.2f}x")
 
                 # Desliga o modo auto para o jogo normal continuar com o zoom perfeito!
