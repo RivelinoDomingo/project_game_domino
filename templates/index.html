@@ -40,10 +40,10 @@
         #arena {
             display: grid;
             /* Aumentamos as colunas laterais de 250px para 350px */
-            grid-template-columns: 350px 1fr 350px;
+            grid-template-columns: minmax(250px, 350px) 1fr minmax(250px, 350px);
             grid-template-rows: auto 1fr auto;
             gap: 20px;
-            max-width: 1500px;
+            max-width: 1900px;
             margin: 0 auto;
             min-height: 80vh;
         }
@@ -539,7 +539,7 @@
             }
 
             container.style.position = 'relative';
-            container.style.height = '430px'; // Altura fixa da arena
+            container.style.height = '500px'; // Altura fixa da arena
             container.style.display = 'block';
             container.style.overflow = 'hidden'; // Impede que o desenho transborde a div
 
@@ -559,14 +559,14 @@
             const spanY = maxY - minY;
 
             // 2. Configurações da Mesa Web
-            const fatorBase = 1.6; // O nosso distanciamento natural das pedras
+            const fatorBase = 1.7; // O nosso distanciamento natural das pedras
             const mesaW = container.clientWidth || 1000; // Largura do quadro verde
             const mesaH = container.clientHeight || 500; // Altura do quadro verde
 
             // 3. O CÁLCULO DE AUTO-FIT (ZOOM AUTOMÁTICO)
             // Calculamos quanto espaço a cobra ocuparia no tamanho normal (com margem de 150px)
-            const larguraNecessaria = (spanX * fatorBase) + 150;
-            const alturaNecessaria  = (spanY * fatorBase) + 150;
+            const larguraNecessaria = (spanX * fatorBase) + 100;
+            const alturaNecessaria  = (spanY * fatorBase) + 100;
 
             // Verificamos qual lado estourou o limite e calculamos a percentagem de encolhimento
             let escalaAuto = Math.min(mesaW / larguraNecessaria, mesaH / alturaNecessaria);
@@ -646,8 +646,15 @@
         // ==========================================
         // SISTEMA DE POPUP DE DUPLICATA
         // ==========================================
+
         let timeoutToast = null;
         let ultimaDuplicata = null;  // Para evitar repetir o mesmo aviso várias vezes
+        // Substitua os setIntervals por requestAnimationFrame para melhor performance
+        let animationId = null;
+        let ultimoUpdate = 0;
+        const INTERVALO_UPDATE = 1000; // 1 segundo
+        const INTERVALO_FIREBASE = 3000; // 3 segundos
+        let start = true;
 
         function mostrarToast(mensagem) {
             const toast = document.getElementById('toastDuplicata');
@@ -733,41 +740,56 @@
                     modoAtualAnterior = dados.modo_atual;
                 }
 
-                try {
-                    // Faz apenas UMA chamada, enviando o comando 'calibrar'
-                    const resposta = await fetch('/api/action_exec', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action2: 'valor_zoom' })
-                    });
+                if (dados.zoom_state !== null || start) {
+                    start = false;
+                    try {
+                        // Faz apenas UMA chamada, enviando o comando 'calibrar'
+                        const resposta = await fetch('/api/action_exec', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action2: 'valor_zoom' })
+                        });
 
-                    const actions_result = await resposta.json();
-                    // console.log('Resposta completa:', actions_result);
-                    // console.log('Zoom atual:', actions_result.zoom);
+                        const actions_result = await resposta.json();
+                        // console.log('Resposta completa:', actions_result);
+                        // console.log('Zoom atual:', actions_result.zoom);
 
-                    // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
-                    if (actions_result.zoom !== undefined) {
-                        const zoomSlider = document.getElementById('zoomSlider');
-                        const zoomValor = document.getElementById('zoomValor');
+                        // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
+                        if (actions_result.zoom !== undefined) {
+                            const zoomSlider = document.getElementById('zoomSlider');
+                            const zoomValor = document.getElementById('zoomValor');
 
-                        // Atualiza o valor do slider
-                        zoomSlider.value = actions_result.zoom.toFixed(3);
+                            // Atualiza o valor do slider
+                            zoomSlider.value = actions_result.zoom.toFixed(3);
 
-                        // Atualiza o texto exibido
-                        zoomValor.innerText = actions_result.zoom.toFixed(3);
+                            // Atualiza o texto exibido
+                            zoomValor.innerText = actions_result.zoom.toFixed(3);
 
-                        // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
+                            // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
+                        }
+
+                    } catch (error) {
+                        console.error('Erro:', error);
+                        alert('Erro ao calibrar zoom: ' + error.message);
                     }
-
-                } catch (error) {
-                    console.error('Erro:', error);
-                    alert('Erro ao calibrar zoom: ' + error.message);
                 }
+
+
 
             } catch (error) {
                 console.error("Erro na comunicação com o VAR:", error);
             }
         }
+
+        function loopAnimacao(timestamp) {
+            if (timestamp - ultimoUpdate >= INTERVALO_UPDATE) {
+                ultimoUpdate = timestamp;
+                loopDoJogo();
+            }
+            animationId = requestAnimationFrame(loopAnimacao);
+        }
+        // Iniciar animação
+        animationId = requestAnimationFrame(loopAnimacao);
 
         // ==========================================
         // INTEGRAÇÃO COM O FIREBASE (PLACAR DOMINÓ)
@@ -823,14 +845,21 @@
             }
         }
 
-        // Chama a primeira vez imediatamente
-        sincronizarPlacarFirebase();
+        // Para o Firebase, use setInterval mesmo, mas com throttle
+        let firebaseTimeout = null;
+        function sincronizarPlacarFirebaseThrottled() {
+            if (firebaseTimeout) return;
+            firebaseTimeout = setTimeout(() => {
+                sincronizarPlacarFirebase();
+                firebaseTimeout = null;
+            }, 100); // Throttle de 100ms
+        }
 
-        // Coloque para atualizar o Firebase a cada 3 segundos (para não sobrecarregar a API do Google)
-        setInterval(sincronizarPlacarFirebase, 3000);
+        // Chame sincronizarPlacarFirebaseThrottled() ao invés de sincronizarPlacarFirebase diretamente
+        setInterval(() => {
+            sincronizarPlacarFirebaseThrottled();
+        }, INTERVALO_FIREBASE);
 
-        // Roda o loop do HTML a cada 1 segundo
-        setInterval(loopDoJogo, 1000);
 
     </script>
 </body>
