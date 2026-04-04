@@ -11,7 +11,7 @@ app = Flask(__name__)
 # Variáveis globais para armazenar a última leitura da mesa
 # device = 'http://192.168.1.135:4747/video' # Para Droidcam
 # camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
-device = 'http://192.168.1.101:5000/video?video_size=1920x1080'  # Para Ip WebCam
+device = 'http://192.168.1.100:5000/video?video_size=1920x1080'  # Para Ip WebCam
 camera = cv2.VideoCapture(device)
 
 
@@ -26,7 +26,7 @@ DISTANCIA_MINIMA = 37    # Distância minima entre as pedras
 TEMPO_MEMORIA = 4.0
 cache_pedras = []
 modo_leitura = 'mesa'
-actions = {'action': 'none'}
+actions = {'action': 'none', 'action1': 'none', 'action2': 'none'}
 resetMaoPlayers = False
 tirar_foto_debug = False  # O nosso gatilho de foto debug
 maos_jogadores = {
@@ -39,9 +39,7 @@ ler_info = True
 modoAuto = False
 duplicada = None
 zoom_reset = False
-LIMITE_MAX_TRACO = 32
-LIMITE_MIN_TRACO = 12 # Ignora cisco que o ratio achou que era linha
-LIMITE_EXPESSURA = 5
+
 
 def ordenar_pontos(pts):
     # Inicializa uma lista de coordenadas que serão ordenadas
@@ -177,8 +175,6 @@ def validar_pedra_lisa(gray_img, rect_pedra):
         # Imprime no terminal o MOTIVO da rejeição para você poder calibrar!
         print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) Dif: {diferenca_brilho:.0f}")
         return False
-
-# ====================================================================
 
 def valor_ja_existe(valor_procurado, modo_atual, pedras_ja_vistas_neste_frame):
     global maos_jogadores
@@ -371,6 +367,9 @@ def loop_da_camera():
                         metricas.append(linha_comprimento)
 
                 # --- A NOVA BLINDAGEM DE TAMANHO ---
+                LIMITE_MAX_TRACO = 28
+                LIMITE_MIN_TRACO = 18
+                LIMITE_EXPESSURA = 5
 
                 # Adicionamos os limites de comprimento no IF principal
                 if ratio > 2.0 and not modoAuto and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_EXPESSURA):
@@ -791,15 +790,21 @@ def action_exec():
     dados = request.get_json()
     actions['action'] = dados.get('action')
     actions['action1'] = dados.get('action1')
+    actions['action2'] = dados.get('action2')
 
     # Se fomos ler a mão de alguém, armamos o gatilho da foto!
     if actions['action'] == 'reset':
         resetMaoPlayers = True
+        return jsonify({"status": "sucesso"})
 
     if actions['action1'] == 'calibrar':
         modoAuto = True
+        return jsonify({"status": "sucesso"})
 
-    return jsonify({"status": "sucesso", "zoom": zoom_factor})
+    if actions['action2'] == 'valor_zoom':
+        return jsonify({"status": "sucesso", "zoom": zoom_factor})
+
+
 
 @app.route('/api/estado_jogo')
 def estado_jogo():

@@ -414,6 +414,7 @@
             });
         }
         document.getElementById('inputMemoria').addEventListener('change', enviarConfiguracoes);
+
         document.getElementById('inputIntervalo').addEventListener('change', enviarConfiguracoes);
 
         document.getElementById('btnForcarMesa').addEventListener('click', () => {
@@ -451,31 +452,13 @@
                     body: JSON.stringify({ action1: 'calibrar' })
                 });
 
-                const actions_result = await resposta.json();
-                // console.log('Resposta completa:', actions_result);
-                // console.log('Zoom atual:', actions_result.zoom);
-
-                // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
-                if (actions_result.zoom !== undefined) {
-                    const zoomSlider = document.getElementById('zoomSlider');
-                    const zoomValor = document.getElementById('zoomValor');
-
-                    // Atualiza o valor do slider
-                    zoomSlider.value = actions_result.zoom.toFixed(3);
-
-                    // Atualiza o texto exibido
-                    zoomValor.innerText = actions_result.zoom.toFixed(3);
-
-                    // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
-
-                    // Opcional: Mostrar feedback visual
-                    const btn = document.getElementById('btnAutoZoom');
-                    const textoOriginal = btn.textContent;
-                    btn.textContent = '✅ Zoom Calibrado!';
-                    setTimeout(() => {
-                        btn.textContent = textoOriginal;
-                    }, 2000);
-                }
+                // Opcional: Mostrar feedback visual
+                const btn = document.getElementById('btnAutoZoom');
+                const textoOriginal = btn.textContent;
+                btn.textContent = '✅ Zoom Calibrado!';
+                setTimeout(() => {
+                    btn.textContent = textoOriginal;
+                }, 2000);
 
             } catch (error) {
                 console.error('Erro:', error);
@@ -750,6 +733,37 @@
                     modoAtualAnterior = dados.modo_atual;
                 }
 
+                try {
+                    // Faz apenas UMA chamada, enviando o comando 'calibrar'
+                    const resposta = await fetch('/api/action_exec', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action2: 'valor_zoom' })
+                    });
+
+                    const actions_result = await resposta.json();
+                    // console.log('Resposta completa:', actions_result);
+                    // console.log('Zoom atual:', actions_result.zoom);
+
+                    // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
+                    if (actions_result.zoom !== undefined) {
+                        const zoomSlider = document.getElementById('zoomSlider');
+                        const zoomValor = document.getElementById('zoomValor');
+
+                        // Atualiza o valor do slider
+                        zoomSlider.value = actions_result.zoom.toFixed(3);
+
+                        // Atualiza o texto exibido
+                        zoomValor.innerText = actions_result.zoom.toFixed(3);
+
+                        // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
+                    }
+
+                } catch (error) {
+                    console.error('Erro:', error);
+                    alert('Erro ao calibrar zoom: ' + error.message);
+                }
+
             } catch (error) {
                 console.error("Erro na comunicação com o VAR:", error);
             }
@@ -770,36 +784,38 @@
                 const campos = json.fields;
 
                 const active = campos[`status`].stringValue;
-                console.log(active);
+                // console.log(active);
 
                 // Faz o loop para os 4 jogadores
                 for (let i = 1; i <= 4; i++) {
+                    if (active === "active") {
+                        // Extração segura dos dados (Lida com o fato do JSON ter stringValue e integerValue)
+                        const nome = campos[`nome${i}`] ? `Jogador - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
+                        const pontos = campos[`jogador${i}`] ? parseInt(campos[`jogador${i}`].integerValue) : 0;
+                        const raios = campos[`raios${i}`] ? parseInt(campos[`raios${i}`].integerValue) : 0;
+                        const lambretas = campos[`lambretas${i}`] ? parseInt(campos[`lambretas${i}`].integerValue) : 0;
 
-                    // Extração segura dos dados (Lida com o fato do JSON ter stringValue e integerValue)
-                    const nome = campos[`nome${i}`] ? `Jogador${i} - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
-                    const pontos = campos[`jogador${i}`] ? parseInt(campos[`jogador${i}`].integerValue) : 0;
-                    const raios = campos[`raios${i}`] ? parseInt(campos[`raios${i}`].integerValue) : 0;
-                    const lambretas = campos[`lambretas${i}`] ? parseInt(campos[`lambretas${i}`].integerValue) : 0;
+                        // 1. Atualiza o Nome
+                        document.getElementById(`nome-p${i}`).innerText = nome;
 
+                        // 2. Atualiza as 6 Bolinhas (Pinta de amarelo as ativas)
+                        let htmlBolinhas = '';
+                        const totalPontosPartida = 4; // O padrão do dominó até bater
+                        for (let b = 1; b <= totalPontosPartida; b++) {
+                            const classeAtiva = b <= pontos ? 'ativa' : '';
+                            htmlBolinhas += `<div class="bolinha-placar ${classeAtiva}"></div>`;
+                        }
+                        document.getElementById(`bolinhas-p${i}`).innerHTML = htmlBolinhas;
 
-
-                    // 1. Atualiza o Nome
-                    document.getElementById(`nome-p${i}`).innerText = nome;
-
-                    // 2. Atualiza as 6 Bolinhas (Pinta de amarelo as ativas)
-                    let htmlBolinhas = '';
-                    const totalPontosPartida = 4; // O padrão do dominó até bater
-                    for (let b = 1; b <= totalPontosPartida; b++) {
-                        const classeAtiva = b <= pontos ? 'ativa' : '';
-                        htmlBolinhas += `<div class="bolinha-placar ${classeAtiva}"></div>`;
+                        // 3. Atualiza os Ícones (Raios e Lambretas)
+                        let htmlExtras = '';
+                        if (raios > 0) htmlExtras += `<span title="Raios">⚡ ${raios}</span>`;
+                        if (lambretas > 0) htmlExtras += `<span title="Lambretas">🛵 ${lambretas}</span>`;
+                        document.getElementById(`extras-p${i}`).innerHTML = htmlExtras;
                     }
-                    document.getElementById(`bolinhas-p${i}`).innerHTML = htmlBolinhas;
-
-                    // 3. Atualiza os Ícones (Raios e Lambretas)
-                    let htmlExtras = '';
-                    if (raios > 0) htmlExtras += `<span title="Raios">⚡ ${raios}</span>`;
-                    if (lambretas > 0) htmlExtras += `<span title="Lambretas">🛵 ${lambretas}</span>`;
-                    document.getElementById(`extras-p${i}`).innerHTML = htmlExtras;
+                    else {
+                        document.getElementById(`nome-p${i}`).innerText = `Jogador${i}`;
+                    }
                 }
 
             } catch (error) {
