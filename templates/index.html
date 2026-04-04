@@ -156,6 +156,18 @@
             width: 100%;
         }
 
+        .domino.gato {
+            box-shadow: 0 0 25px rgba(255, 0, 0, 1);
+            border: 2px solid #ff0000;
+            animation: alertaGato 0.6s infinite alternate;
+            z-index: 100; /* Força o gato a brilhar por cima das outras pedras */
+        }
+
+        @keyframes alertaGato {
+            from { box-shadow: 0 0 5px rgba(255, 0, 0, 0.8); }
+            to { box-shadow: 0 0 35px rgba(255, 0, 0, 1), inset 0 0 10px rgba(255,0,0,0.5); }
+        }
+
         /* =========================================
         POPUP DE AVISO (TOAST NOTIFICATION)
         ========================================= */
@@ -267,7 +279,7 @@
         <div class="config-group">
             <label style="cursor: pointer;">
                 <input type="checkbox" id="videoToggle" checked style="transform: scale(1.3); margin-right: 8px;">
-                📹 Mostrar Visão do Robô
+                📹 Mostrar Visão Câmera
             </label>
         </div>
 
@@ -286,7 +298,7 @@
         </div>
 
         <div class="config-group">
-            <label for="inputIntervalo">⏱️ Intervalo Câmera (s):</label>
+            <label for="inputIntervalo">⏱️ Intervalo (s):</label>
             <input type="number" id="inputIntervalo" value="2.0" step="0.5" min="0.5" max="5">
         </div>
 
@@ -539,9 +551,91 @@
             }
 
             container.style.position = 'relative';
-            container.style.height = '500px'; // Altura fixa da arena
+            container.style.height = '500px';
             container.style.display = 'block';
-            container.style.overflow = 'hidden'; // Impede que o desenho transborde a div
+            container.style.overflow = 'hidden';
+
+            // ========================================================
+            // 🕵️ DETECTOR DE GATOS (Análise de Proximidade Espacial)
+            // ========================================================
+            const RAIO_VIZINHOS = 65; // Distância física em pixels na câmera
+
+            // Passo A: Reseta o status
+            listaPedras.forEach(p => p.isGato = false);
+
+            // Função interna mágica: Calcula o X e Y exato de cada lado do dominó
+            function obterMetades(p) {
+                // Em OpenCV, do centro da pedra até ao meio de uma metade são ~15 pixels
+                const distDoCentro = 15;
+
+                let angle_usage = -90;
+                if (p.angulo >= 80) {
+                    angle_usage = -90;
+                }else{
+                    angle_usage = 90;
+                }
+
+                const angulo_pedra = p.angulo + angle_usage; // Correção para o angulo da pedra referente a mesa.
+
+                const rad = angulo_pedra * (Math.PI / 180); // Converte ângulo para radianos
+                const valores = p.valor.split('|');
+
+                return [
+                    { // Metade 0 (Metade de Cima/Esquerda)
+                        v: valores[0],
+                        x: p.x + distDoCentro * Math.sin(rad),
+                        y: p.y - distDoCentro * Math.cos(rad)
+                    },
+                    { // Metade 1 (Metade de Baixo/Direita)
+                        v: valores[1],
+                        x: p.x - distDoCentro * Math.sin(rad),
+                        y: p.y + distDoCentro * Math.cos(rad)
+                    }
+                ];
+            }
+
+            // Passo B: Compara quem está encostado em quem
+            for (let i = 0; i < listaPedras.length; i++) {
+                for (let j = i + 1; j < listaPedras.length; j++) {
+                    const p1 = listaPedras[i];
+                    const p2 = listaPedras[j];
+
+                    const distCentro = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+
+                    // Se as pedras estão perto o suficiente para estarem a jogar...
+                    if (distCentro <= RAIO_VIZINHOS) {
+                        const metades1 = obterMetades(p1);
+                        const metades2 = obterMetades(p2);
+
+                        let menorDistancia = Infinity;
+                        let valorEncostado1 = null;
+                        let valorEncostado2 = null;
+
+                        // Descobre QUAIS das 4 metades estão fisicamente mais próximas
+                        for (let m1 of metades1) {
+                            for (let m2 of metades2) {
+                                const dist = Math.hypot(m1.x - m2.x, m1.y - m2.y);
+                                if (dist < menorDistancia) {
+                                    menorDistancia = dist;
+                                    valorEncostado1 = m1.v;
+                                    valorEncostado2 = m2.v;
+                                }
+                            }
+                        }
+
+                        // Se a distância entre as metades "vizinhas" for coerente com um encaixe (~30px a 38px)
+                        if (menorDistancia <= 38) {
+                            // O JULGAMENTO FINAL: O número físico que está encostado bate?
+                            if (valorEncostado1 !== valorEncostado2) {
+                                p1.isGato = true;
+                                p2.isGato = true;
+                                // console.log(`🚨 GATO DETECTADO! Encostou ${valorEncostado1} no ${valorEncostado2}`);
+                            }
+                        }
+                    }
+                }
+            }
+            // ========================================================
 
             // 1. Descobre a Borda Extrema do Jogo (Bounding Box)
             let minX = Infinity, minY = Infinity;
@@ -554,57 +648,49 @@
                 if (p.y > maxY) maxY = p.y;
             });
 
-            // Qual é o comprimento total da cobra de dominós na vida real?
             const spanX = maxX - minX;
             const spanY = maxY - minY;
 
-            // 2. Configurações da Mesa Web
-            const fatorBase = 1.7; // O nosso distanciamento natural das pedras
-            const mesaW = container.clientWidth || 1000; // Largura do quadro verde
-            const mesaH = container.clientHeight || 500; // Altura do quadro verde
+            const fatorBase = 1.6;
+            const mesaW = container.clientWidth || 800;
+            const mesaH = container.clientHeight || 500;
 
-            // 3. O CÁLCULO DE AUTO-FIT (ZOOM AUTOMÁTICO)
-            // Calculamos quanto espaço a cobra ocuparia no tamanho normal (com margem de 150px)
-            const larguraNecessaria = (spanX * fatorBase) + 100;
-            const alturaNecessaria  = (spanY * fatorBase) + 100;
+            const larguraNecessaria = (spanX * fatorBase) + 150;
+            const alturaNecessaria  = (spanY * fatorBase) + 150;
 
-            // Verificamos qual lado estourou o limite e calculamos a percentagem de encolhimento
             let escalaAuto = Math.min(mesaW / larguraNecessaria, mesaH / alturaNecessaria);
 
-            // Travas de segurança: Não deixa o dominó ficar gigante (1.2) nem minúsculo (0.2)
             if (escalaAuto > 1.2) escalaAuto = 1.2;
             if (escalaAuto < 0.2) escalaAuto = 0.2;
 
-            // Fator final que ajusta a distância entre as pedras
             const fatorFinal = fatorBase * escalaAuto;
 
-            // 4. CENTRALIZAÇÃO DA MESA (Para não ficar presa no canto esquerdo)
             const larguraReal = spanX * fatorFinal;
             const alturaReal = spanY * fatorFinal;
 
-            // Empurra as coordenadas em X e Y para o centro exato da tela!
             const offsetX = (mesaW - larguraReal) / 2;
             const offsetY = (mesaH - alturaReal) / 2;
 
-            // 5. Desenhando as pedras com a nova física
+            // 5. Desenhando as pedras
             listaPedras.forEach(pedraObj => {
                 const partes = pedraObj.valor.split('|');
 
-                // Aplica o distanciamento comprimido e o deslocamento para o centro
                 const posicaoX = (pedraObj.x - minX) * fatorFinal + offsetX;
                 const posicaoY = (pedraObj.y - minY) * fatorFinal + offsetY;
 
                 angle_usage = -90;
                 if (pedraObj.angulo >= 80) {
-                    angle_usage = -90
+                    angle_usage = -90;
                 }else{
-                    angle_usage = 90
+                    angle_usage = 90;
                 }
                 const anguloCSS = pedraObj.angulo + angle_usage;
 
-                // A GRANDE MÁGICA: Usamos scale(${escalaAuto}) no CSS para encolher o HTML da própria pedra!
+                // Aqui injetamos a classe 'gato' caso a pedra tenha sido flagrada no radar!
+                const classeExtra = pedraObj.isGato ? ' gato' : '';
+
                 const dominoHtml = `
-                    <div class="domino" style="
+                    <div class="domino${classeExtra}" style="
                         position: absolute;
                         left: ${posicaoX}px;
                         top: ${posicaoY}px;

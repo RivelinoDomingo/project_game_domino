@@ -434,12 +434,12 @@ def processar_frame(img, tempo_atual):
 
     global zoom_reset, modoAuto, processar_grupos, zoom_change
 
-    if modoAuto and not zoom_reset:
-        zoom_reset = True
-        zoom_factor = 1.0
-
-    if zoom_reset:
-        zoom_reset = False
+    # if modoAuto and not zoom_reset:
+    #     zoom_reset = True
+    # zoom_factor = 1.3
+    #
+    # if zoom_reset:
+    #     zoom_reset = False
 
     # Limita o número de contornos processados
     if modoAuto:
@@ -470,7 +470,7 @@ def processar_frame(img, tempo_atual):
                 # print(f"Comprimento: {linha_comprimento}    -    Espessura: {linha_espessura}    -    Ratio: {ratio}   ##  Zoom: {zoom_factor}")
                 # time.sleep(0.5)
 
-        if ratio > 6.0 and not modoAuto and 18 <= linha_comprimento <= 28 and 1 <= linha_espessura <= 6:
+        if ratio > 6.0 and not modoAuto and 23 <= linha_comprimento <= 27 and 1 <= linha_espessura <= 6:
             if w_box > h_box:
                 rect_pedra = ((cx, cy), (30, 61), angle)
             else:
@@ -503,7 +503,7 @@ def processar_frame(img, tempo_atual):
                 # print(f"Valor médio de: {i}px")
                 mediaFinal = i
 
-    TAMANHO_IDEAL = 24.0 # O tamanho que o algoritmo ama ler
+    TAMANHO_IDEAL = 26.0 # O tamanho que o algoritmo ama ler
 
     if modoAuto and len(medias) > 0:
         # Pega a média mais relevante (geralmente a maior ou a do grupo com mais itens)
@@ -523,6 +523,7 @@ def processar_frame(img, tempo_atual):
         actions['action1'] = None
         zoom_change = True
         modoAuto = False
+        # time.sleep(60)
 
     # Remove duplicatas (continuação do código original)
     pedras_unicas = []
@@ -748,10 +749,6 @@ def processar_frame(img, tempo_atual):
         if len(lista_final) == 7:
             maos_jogadores[modo_leitura] = lista_final
             print(f"✅ Mão de {modo_leitura} atualizada com {len(lista_final)} pedras")
-
-
-
-
 
 
     # Prepara frame para streaming
