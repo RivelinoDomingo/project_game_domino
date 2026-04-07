@@ -10,7 +10,8 @@ from collections import deque
 app = Flask(__name__)
 
 # Configurações otimizadas
-device = 'http://192.168.1.135:5000/video?video_size=1920x1080'
+# device = 'http://192.168.1.103:5000/video?video_size=1920x1080'
+device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 1.0
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
@@ -107,7 +108,7 @@ def extrair_e_contar(img, rect_pedra):
                 area = cv2.contourArea(c)
 
                 # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
-                if 30 < area < 85:
+                if 32 < area < 85:
                     # BLINDAGEM 2: O filtro de formato (Circularidade)
                     perimetro = cv2.arcLength(c, True)
                     if perimetro == 0: continue
@@ -115,7 +116,7 @@ def extrair_e_contar(img, rect_pedra):
                     circularidade = 4 * np.pi * (area / (perimetro * perimetro))
 
                     # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
-                    if circularidade > 0.4:
+                    if circularidade > 0.2:
                         pontos += 1
 
             # BLINDAGEM 3: Trava matemática máxima de um dominó
@@ -129,52 +130,6 @@ def extrair_e_contar(img, rect_pedra):
     # cv2.waitKey(0)
 
     return pts_cima, pts_baixo
-
-def validar_pedra_lisa(gray_img, rect_pedra):
-    # 1. Obter os 4 cantos da caixa verde
-    box = cv2.boxPoints(rect_pedra)
-    box = np.int32(box)
-
-    # Usa a sua função já existente para colocar os pontos na ordem certa
-    pts = ordenar_pontos(box)
-
-    # 2. "Esticar" a imagem para um retângulo perfeito (ex: 60x120 pixels)
-    largura, altura = 60, 120
-    pts_destino = np.array([
-        [0, 0],
-        [largura - 1, 0],
-        [largura - 1, altura - 1],
-        [0, altura - 1]
-    ], dtype="float32")
-
-    matriz = cv2.getPerspectiveTransform(pts, pts_destino)
-    pedra_plana = cv2.warpPerspective(gray_img, matriz, (largura, altura))
-
-    # 3. A Guilhotina: Divide exatamente no meio do traço
-    metade_cima = pedra_plana[0:altura//2, 0:largura]
-    metade_baixo = pedra_plana[altura//2:altura, 0:largura]
-
-    # 4. Calcula o Brilho e a Textura de cada metade individualmente
-    mean_c = cv2.meanStdDev(metade_cima)
-    mean_b = cv2.meanStdDev(metade_baixo)
-
-    brilho_c = mean_c[0][0].item()
-    brilho_b = mean_b[0][0].item()
-
-    # 5. A NOVA REGRA (Simetria de Brilho)
-    diferenca_brilho = abs(brilho_c - brilho_b)
-
-    # ========================================================
-    # OS CRITÉRIOS DE APROVAÇÃO:
-    # 1. As duas metades têm de ser claras (> 100)
-    # 2. A diferença de luz entre elas tem de ser pequena (< 40)
-    # ========================================================
-    if (brilho_c > 150 and brilho_b > 150) and diferenca_brilho < 30:
-        return True
-    else:
-        # Imprime no terminal o MOTIVO da rejeição para você poder calibrar!
-        print(f"👻 Fantasma rejeitado! Brilho (C:{brilho_c:.0f}, B:{brilho_b:.0f}) Dif: {diferenca_brilho:.0f}")
-        return False
 
 def valor_ja_existe(valor_procurado, modo_atual, pedras_ja_vistas_neste_frame):
     global maos_jogadores
@@ -259,11 +214,11 @@ def inicializar_camera():
     """Inicializa a câmera com tentativas e timeout"""
     global camera
     try:
-        camera = cv2.VideoCapture(device)
+        camera = cv2.VideoCapture(device,cv2.CAP_FFMPEG)
         if not camera.isOpened():
             print("⚠️ Falha ao abrir câmera, tentando novamente...")
             time.sleep(1)
-            camera = cv2.VideoCapture(device)
+            camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
 
         # Configurações para reduzir buffer e latência
         camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -276,7 +231,7 @@ def inicializar_camera():
 camera = None
 inicializar_camera()
 
-def ler_frame_com_timeout(timeout=1):
+def ler_frame_com_timeout(timeout=5):
     """Lê frame com timeout para não travar"""
     global camera, falhas_consecutivas, ultimo_frame_valido
 
@@ -328,18 +283,45 @@ def ler_frame_com_timeout(timeout=1):
 def loop_da_camera():
     global ultimo_tempo_processamento, executando_servidor
     global ultimo_frame_processado
+    global camera # Precisamos da referência da câmera aqui para o replay/fps
 
     tempo_ultimo_frame = time.time()
     frames_sem_processar = 0
 
+    # ========================================================
+    # 1. DESCOBRE A VELOCIDADE ORIGINAL DO VÍDEO (FPS)
+    # ========================================================
+    fps_video = camera.get(cv2.CAP_PROP_FPS)
+    if fps_video == 0 or math.isnan(fps_video):
+        fps_video = 30.0 # Valor padrão de segurança
+
+    atraso_por_frame = 1.0 / fps_video
+
     while executando_servidor:
         try:
+            tempo_inicio_leitura = time.time() # Marca o tempo antes de ler
+
             # Lê frame com timeout
-            frame = ler_frame_com_timeout(0.5)
+            frame = ler_frame_com_timeout(5)
 
             if frame is None:
-                time.sleep(0.1)
+                # ========================================================
+                # 2. AUTO-REPLAY (Se o frame for None, o vídeo acabou!)
+                # ========================================================
+                print("🔄 Fim do vídeo! Reiniciando a gravação...")
+                camera.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                time.sleep(0.5)
                 continue
+
+            # ========================================================
+            # 3. FREIO DE MÃO (Simula o tempo real)
+            # ========================================================
+            tempo_gasto = time.time() - tempo_inicio_leitura
+            tempo_espera = atraso_por_frame - tempo_gasto
+
+            # Se leu o arquivo do PC muito rápido, dorme o tempo que falta
+            if tempo_espera > 0:
+                time.sleep(tempo_espera)
 
             tempo_atual = time.time()
             frames_sem_processar += 1
@@ -365,6 +347,88 @@ def loop_da_camera():
             print(f"Erro no loop principal: {e}")
             time.sleep(0.5)
 
+
+sentido = 'caindo' # Vai ditar o sentido de incremento da função autozoom.
+zoom_up = 0.0
+zoom_down = 0.0
+zoom_prev = 0.0
+first_zoom = True
+zoom_auto = False
+
+def automatic_zoom(contornos, tam_traco=26, atual_zoom=1.0):
+
+    global processar_grupos, zoom_factor, sentido, range_zoom
+    global zoom_prev, zoom_up, zoom_down, first_zoom
+    metricas = []
+    first_pass = True
+
+    for cnt in contornos:
+        area = cv2.contourArea(cnt)
+        if area < 10 or area > 200:
+            continue
+
+        rect = cv2.minAreaRect(cnt)
+        (cx, cy), (w_box, h_box), angle = rect
+
+        if w_box == 0 or h_box == 0:
+            continue
+
+        linha_comprimento = max(w_box, h_box)
+        linha_espessura = min(w_box, h_box)
+        ratio = linha_comprimento / linha_espessura
+
+        if 15.0 > ratio > 5.0:
+            metricas.append(linha_comprimento)
+            # print(f"Comprimento: {linha_comprimento}    -    Espessura: {linha_espessura}    -    Ratio: {ratio}   ##  Zoom: {zoom_factor}")
+            # time.sleep(0.5)
+
+    if first_zoom:
+        zoom_up = atual_zoom
+        zoom_down = atual_zoom
+        first_zoom = False
+
+    # Auto calibração
+    mediaFinal = 0
+    medias = processar_grupos(metricas)
+
+    for i in medias:
+        if i >= 7:
+            # print(f"Valor médio de: {i}px")
+            mediaFinal = i
+
+    # print(f"Valor de zoom_factor: {zoom_factor}")
+    # time.sleep(0.5)
+
+    if mediaFinal > 0.0:
+        fator_correcao = tam_traco / mediaFinal
+        zoom_result = zoom_factor * fator_correcao
+
+        print(f"🎯 Auto-Calibragem Concluída!")
+        print(f"Traço atual: {mediaFinal:.1f} -> Alvo: {tam_traco}")
+        print(f"Novo Zoom ajustado para: {zoom_result:.2f}x")
+        first_zoom = True
+
+        return True, zoom_result
+
+    else:
+        if not range_zoom:
+            if zoom_down >= 0.2 and sentido == 'caindo':
+                zoom_down = zoom_down - 0.02
+                sentido = 'subindo'
+                if zoom_down < 0.2:
+                    sentido = 'subindo'
+                    print(f"Zoom_factor no minimo: {zoom_factor}, Subindo")
+                return False, zoom_down
+            elif zoom_up <= 2.0 and sentido == 'subindo' or zoom_down < 0.2:
+                zoom_up = zoom_up + 0.02
+                sentido = 'caindo'
+                if zoom_up > 2.0:
+                    sentido = 'caindo'
+                    zoom_down = 1.0
+                    zoom_up = 1.0
+                    print(f"Zoom_factor no minimo: {zoom_factor}, Descendo")
+                return False, zoom_up
+
 def processar_frame(img, tempo_atual):
     """Processa o frame de forma otimizada"""
     global ultima_leitura_pedras, ultimo_frame_processado, duplicada
@@ -388,7 +452,7 @@ def processar_frame(img, tempo_atual):
 
     # Configura intervalos dinâmicos
     global DISTANCIA_MINIMA, INTERVALO_SEGUNDOS, CP_INTERVALO_SEGUNDOS
-    global estado_intervalo, Zerou_mao
+    global estado_intervalo, Zerou_mao, modoAuto
 
     if modo_leitura != 'mesa':
         DISTANCIA_MINIMA = 25
@@ -414,362 +478,321 @@ def processar_frame(img, tempo_atual):
 
     # Processamento de visão computacional
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # ====================================================================
+    # 1. ENCONTRAR A SILHUETA SÓLIDA DAS PEDRAS
+    # ====================================================================
+    # Pega as partes muito claras (plástico do dominó)
+    _, mask_branca = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
 
-    # Usa kernel menor para processamento mais rápido
+    # O SEGREDO 1: Fechar os "buracos" pretos dos traços e bolinhas!
+    # Usamos um kernel bem grande (ex: 25x25) para a mancha branca engolir o traço
+    kernel_silhueta = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    mask_pedra_solida = cv2.morphologyEx(mask_branca, cv2.MORPH_CLOSE, kernel_silhueta)
+
+    # ====================================================================
+    # 2. ENCONTRAR OS DETALHES ESCUROS (Blackhat)
+    # ====================================================================
+    # Aumentei o kernel do Blackhat de (8,8) para (12,12) para pegar traços mais grossos
     kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 12))
     blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
 
-    _, mask_bh = cv2.threshold(blackhat, 100, 255, cv2.THRESH_BINARY)
+    # Baixei o threshold para 80, assim ele não exige que o traço seja "tão" preto
+    _, mask_tracos = cv2.threshold(blackhat, 80, 255, cv2.THRESH_BINARY)
+
+    # ====================================================================
+    # 3. O CRUZAMENTO (O Filtro Perfeito)
+    # ====================================================================
+    # Agora sim: Mantém os traços que estão DENTRO da silhueta sólida da pedra!
+    # Isso ignora totalmente as sombras na toalha de mesa ou nas mãos dos jogadores.
+    mask_tracos_filtrada = cv2.bitwise_and(mask_tracos, mask_pedra_solida)
+
+    # Continua com a solda para juntar os pedacinhos do traço que possam estar falhados
     kernel_close = np.ones((2,2), np.uint8)
-    mask_soldada = cv2.morphologyEx(mask_bh, cv2.MORPH_CLOSE, kernel_close)
+    mask_soldada = cv2.morphologyEx(mask_tracos_filtrada, cv2.MORPH_CLOSE, kernel_close)
 
     contours, _ = cv2.findContours(mask_soldada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    global actions, zoom_change, automatic_zoom, zoom_prev, zoom_auto
 
-    # Processa contornos (restante do código similar ao original, mas otimizado)
-    candidatos = []
-    metricas = []
-    mediaFinal = None
+    if modoAuto and not zoom_auto:
+        zoom_prev = zoom_factor
+        zoom_auto = True
 
-
-    global zoom_reset, modoAuto, processar_grupos, zoom_change
-
-    # if modoAuto and not zoom_reset:
-    #     zoom_reset = True
-    # zoom_factor = 1.3
-    #
-    # if zoom_reset:
-    #     zoom_reset = False
-
-    # Limita o número de contornos processados
+    tamanho = 24    # Tamanho de traço desejado
     if modoAuto:
-        max_contours = 200
-        max_area = 800
+        CP_INTERVALO_SEGUNDOS = INTERVALO_SEGUNDOS
+        INTERVALO_SEGUNDOS = 0.1
+        zoom_sucess, zoom_factor = automatic_zoom(contours, tamanho, zoom_prev)
+        if zoom_sucess:
+            # Desliga o modo auto para o jogo normal continuar com o zoom perfeito!
+            actions['action1'] = None
+            zoom_change = True
+            modoAuto = False
+            zoom_auto = False
+            INTERVALO_SEGUNDOS = CP_INTERVALO_SEGUNDOS
     else:
-        max_contours = 300
-        max_area = 100
+        # Processa contornos (restante do código similar ao original, mas otimizado)
+        candidatos = []
 
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 10 or area > max_area:
-            continue
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 10 or area > 200:
+                continue
 
-        rect = cv2.minAreaRect(cnt)
-        (cx, cy), (w_box, h_box), angle = rect
+            rect = cv2.minAreaRect(cnt)
+            (cx, cy), (w_box, h_box), angle = rect
 
-        if w_box == 0 or h_box == 0:
-            continue
+            if w_box == 0 or h_box == 0:
+                continue
 
-        linha_comprimento = max(w_box, h_box)
-        linha_espessura = min(w_box, h_box)
-        ratio = linha_comprimento / linha_espessura
+            linha_comprimento = max(w_box, h_box)
+            linha_espessura = min(w_box, h_box)
+            ratio = linha_comprimento / linha_espessura
 
-        if modoAuto:
-            if 15.0 > ratio > 5.0:
-                metricas.append(linha_comprimento)
-                # print(f"Comprimento: {linha_comprimento}    -    Espessura: {linha_espessura}    -    Ratio: {ratio}   ##  Zoom: {zoom_factor}")
-                # time.sleep(0.5)
+            if ratio > 6.0 and tamanho - 3 <= linha_comprimento <= tamanho + 3 and 1 <= linha_espessura <= 6:
+                if w_box > h_box:
+                    rect_pedra = ((cx, cy), (30, 61), angle)
+                else:
+                    rect_pedra = ((cx, cy), (61, 30), angle)
 
-        if ratio > 6.0 and not modoAuto and 23 <= linha_comprimento <= 27 and 1 <= linha_espessura <= 6:
-            if w_box > h_box:
-                rect_pedra = ((cx, cy), (30, 61), angle)
-            else:
-                rect_pedra = ((cx, cy), (61, 30), angle)
-
-            # Verifica brilho
-            mask_box = np.zeros(gray.shape, dtype=np.uint8)
-            box_pedra_pts = np.int32(cv2.boxPoints(rect_pedra))
-            cv2.fillPoly(mask_box, [box_pedra_pts], 255)
-            brilho_medio = cv2.mean(gray, mask=mask_box)[0]
-
-            if brilho_medio > 90:
+                # Verifica brilho
+                mask_box = np.zeros(gray.shape, dtype=np.uint8)
+                box_pedra_pts = np.int32(cv2.boxPoints(rect_pedra))
+                cv2.fillPoly(mask_box, [box_pedra_pts], 255)
                 candidatos.append({
                     'rect_pedra': rect_pedra,
                     'rect_traco': rect,
-                    'centro': (cx, cy),
-                    'brilho': brilho_medio
+                    'centro': (cx, cy)
                 })
 
+        pedras_unicas = []
 
-    # Auto calibração
-    mediaFinal = 0
-    medias = []
-    if modoAuto:
-        medias = processar_grupos(metricas)
-        print("Iniciando a calibração!!!")
+        for cand in candidatos:
+            cx1, cy1 = cand['centro']
+            duplicata = False
 
-        for i in medias:
-            if i >= 7:
-                # print(f"Valor médio de: {i}px")
-                mediaFinal = i
-
-    TAMANHO_IDEAL = 26.0 # O tamanho que o algoritmo ama ler
-
-    if modoAuto and len(medias) > 0:
-        # Pega a média mais relevante (geralmente a maior ou a do grupo com mais itens)
-        # Vamos supor que a sua função retorna a lista de médias válidas
-        media_tracos = mediaFinal
-
-        fator_correcao = TAMANHO_IDEAL / media_tracos
-
-        # global zoom_factor
-        zoom_factor = zoom_factor * fator_correcao
-
-        print(f"🎯 Auto-Calibragem Concluída!")
-        print(f"Traço atual: {media_tracos:.1f} -> Alvo: {TAMANHO_IDEAL}")
-        print(f"Novo Zoom ajustado para: {zoom_factor:.2f}x")
-
-        # Desliga o modo auto para o jogo normal continuar com o zoom perfeito!
-        actions['action1'] = None
-        zoom_change = True
-        modoAuto = False
-        # time.sleep(60)
-
-    # Remove duplicatas (continuação do código original)
-    pedras_unicas = []
-    for cand in candidatos:
-        cx1, cy1 = cand['centro']
-        duplicata = False
-        for p in pedras_unicas:
-            cx2, cy2 = p['centro']
-            if math.hypot(cx2 - cx1, cy2 - cy1) < DISTANCIA_MINIMA:
-                duplicata = True
-                break
-        if not duplicata:
-            pedras_unicas.append(cand)
-
-
-
-
-
-    DISTANCIA_CONEXAO = 100  # Tamanho da "Área de influência" de cada pedra
-
-    visitados = set()
-    todos_os_bandos = []
-
-    for i, p1 in enumerate(pedras_unicas):
-        # Se essa pedra já entrou num bando antes, ignoramos
-        if i in visitados:
-            continue
-
-        # Começamos um novo bando com essa pedra
-        bando_atual = [p1]
-        visitados.add(i)
-
-        # A "Fila de Expansão" (vai checar os amigos dos amigos)
-        fila_de_expansao = [p1]
-
-        while fila_de_expansao:
-            pedra_foco = fila_de_expansao.pop(0)
-            cx_foco, cy_foco = pedra_foco['centro']
-
-            # Procura novos amigos para puxar para o bando
-            for j, p2 in enumerate(pedras_unicas):
-                if j not in visitados:
-                    cx2, cy2 = p2['centro']
-                    dist = math.hypot(cx2 - cx_foco, cy2 - cy_foco)
-
-                    # Se a pedra está dentro da área de influência, entra pro bando!
-                    if dist <= DISTANCIA_CONEXAO:
-                        bando_atual.append(p2)
-                        visitados.add(j)
-                        # Coloca ela na fila para a área de influência dela também ser checada!
-                        fila_de_expansao.append(p2)
-
-        # Guarda o bando que acabamos de formar
-        todos_os_bandos.append(bando_atual)
-
-    # ==========================================
-    # PASSO 3: Sobrevivência do Mais Forte
-    # ==========================================
-    if todos_os_bandos:
-        # A função max() com 'key=len' pega automaticamente a lista que tem mais itens!
-        maior_bando = max(todos_os_bandos, key=len)
-        pedras_aprovadas = maior_bando
-    else:
-        pedras_aprovadas = []
-
-    print(f"Pedras encontradas: {len(pedras_aprovadas)}")
-
-    # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
-    pedras_aprovadas.sort(key=lambda x: x['centro'][1])
-
-    # =================================================================
-    # --- MEMÓRIA INDIVIDUAL (O MAPA DA MESA) ---
-    # =================================================================
-
-    lista_final = []
-    out = img.copy()
-
-    global ultima_leitura_pedras, ultimo_frame_processado, duplicada
-    global cache_pedras, enviar_video, valor_ja_existe
-
-    DISTANCIA_TOLERANCIA = 5 # Se a pedra está no mesmo lugar (margem de 5px), é a mesma.
-
-    pedras_vistas_agora = []
-    valor_pedra = None
-    duplicada = None
-
-    for d in pedras_aprovadas:
-        # Tratando de forma direta quando no modo de seleção da maõ do jogador
-        if modo_leitura != 'mesa':
-            # Pega a contagem real
-            pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
-            # Adiciona na lista que vai para a Web
-            soma_pts = pts_cima + pts_baixo
-            if soma_pts <= 2:
-                if not validar_pedra_lisa(gray, d['rect_pedra']):
-                    # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
-                    # print(f"Pedra Rejeitada: {texto}")
-                    pedras_aprovadas.remove(d)
-                    continue
-            valor_pedra = f"{pts_cima}|{pts_baixo}"
-            cx_nova, cy_nova = d['centro']
-
-            if enviar_video:
-                # --- DESENHA AS CAIXAS PARA A WEB VER ---
-                box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
-                cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
-                box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
-                cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
-
-                # Opcional: Escreve o número da pedra lida na própria imagem
-                cx, cy = int(d['centro'][0]), int(d['centro'][1])
-                cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 20, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        else:
-
-            cx_nova, cy_nova = d['centro']
-            pedra_reconhecida_memoria = None
-            menor_distancia = float('inf')
-
-            # 1. Procura qual pedra da memória está mais perto desta caixa atual
-            for p_mem in cache_pedras:
-                cx_mem, cy_mem = p_mem['centro']
-                dist = math.hypot(cx_mem - cx_nova, cy_mem - cy_nova)
-
-                if dist < menor_distancia:
-                    menor_distancia = dist
-                    if dist < DISTANCIA_TOLERANCIA:
-                        pedra_reconhecida_memoria = p_mem
-
-            # 2. Decide se aproveita a memória ou se gasta CPU para recalcular
-            if pedra_reconhecida_memoria:
-                # ACHOU NO MAPA: É a mesma pedra de antes! Copia o valor.
-                valor_pedra = pedra_reconhecida_memoria['valor']
-            else:
-                # LUGAR NOVO: Pedra recém-colocada (ou a mesa foi arrastada). Recalcula!
-                pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
-                soma_pts = pts_cima + pts_baixo
-                if soma_pts <= 2:
-                    if not validar_pedra_lisa(gray, d['rect_pedra']):
-                        pedras_aprovadas.remove(d)
-                        # Se for falso positivo (ex: linha na mesa), pula pro próximo laço!
-                        # print(f"Pedra Rejeitada: {texto}")
-                        continue
-                valor_pedra = f"{pts_cima}|{pts_baixo}"
-        # 3. Adiciona na lista de hoje (atualizando a coordenada exata para não haver "drift")
-        if not valor_ja_existe(valor_pedra, modo_leitura, pedras_vistas_agora):
-            pedras_vistas_agora.append({
-                'centro': (cx_nova, cy_nova),
-                'rect_pedra': d['rect_pedra'],
-                'rect_traco': d['rect_traco'],
-                'valor': valor_pedra,
-                'ultima_vez_vista': tempo_atual
-            })
-            # duplicada = None
-        else:
-            # Imprime apenas se NÃO for a mesa para evitar poluir o log
-            if modo_leitura != 'mesa':
-                print(f"🚫 Duplicata rejeitada: {valor_pedra} (já pertence a outro ou lida duas vezes)")
-                duplicada = valor_pedra
-                continue
-
-    print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
-
-    ## Bloco de debug de dados das pedras
-    # global ler_info
-    # if ler_info and modo_leitura != 'mesa':
-    #     print(pedras_vistas_agora)
-    #     ler_info = False
-
-    # 4. RECUPERAÇÃO DE FANTASMAS (Mão na frente da câmera)
-    # Se uma pedra antiga não foi vista agora, mas tem tempo de vida, nós a mantemos viva
-    if modo_leitura == 'mesa':
-        for p_mem in cache_pedras:
-            ja_vista = False
-            for p_agora in pedras_vistas_agora:
-                # Verifica se o espaço dela já foi ocupado
-                dist = math.hypot(p_mem['centro'][0] - p_agora['centro'][0], p_mem['centro'][1] - p_agora['centro'][1])
-                if dist < DISTANCIA_TOLERANCIA:
-                    ja_vista = True
+            for p in pedras_unicas:
+                cx2, cy2 = p['centro']
+                if math.hypot(cx2 - cx1, cy2 - cy1) < DISTANCIA_MINIMA:
+                    duplicata = True
                     break
 
-            if not ja_vista and (tempo_atual - p_mem['ultima_vez_vista']) <= TEMPO_MEMORIA:
-                # Se ninguém tomou o lugar dela e ela ainda tem tempo, injeta ela de volta!
-                pedras_vistas_agora.append(p_mem)
+            if not duplicata:
+                pedras_unicas.append(cand)
 
-    # Atualiza o mapa oficial
-    cache_pedras = pedras_vistas_agora
 
-    for p in cache_pedras:
-        cx, cy = p['rect_pedra'][0]
+        # Configuração de bando
+        DISTANCIA_CONEXAO = 70  # Tamanho da "Área de influência" de cada pedra
+        agrupamento = True
+        pedras_aprovadas = []
 
-        # Desempacotamos a Largura (w) e a Altura (h)
-        w, h = p['rect_pedra'][1]
+        if agrupamento:
+            visitados = set()
+            todos_os_bandos = []
 
-        angulo_cv = p['rect_pedra'][2]
+            for i, p1 in enumerate(pedras_unicas):
+                # Se essa pedra já entrou num bando antes, ignoramos
+                if i in visitados:
+                    continue
 
-        # --- A INTELIGÊNCIA DE ORIENTAÇÃO ---
-        # O CSS desenha as pedras "em pé" por padrão (0 graus).
-        if w < h:
-            # Pedra EM PÉ. O OpenCV deu ~90 graus.
-            # Subtraímos 90 para o CSS entender que é 0 graus (Vertical)
-            angulo_corrigido = angulo_cv - 90
+                # Começamos um novo bando com essa pedra
+                bando_atual = [p1]
+                visitados.add(i)
+
+                # A "Fila de Expansão" (vai checar os amigos dos amigos)
+                fila_de_expansao = [p1]
+
+                while fila_de_expansao:
+                    pedra_foco = fila_de_expansao.pop(0)
+                    cx_foco, cy_foco = pedra_foco['centro']
+
+                    # Procura novos amigos para puxar para o bando
+                    for j, p2 in enumerate(pedras_unicas):
+                        if j not in visitados:
+                            cx2, cy2 = p2['centro']
+                            dist = math.hypot(cx2 - cx_foco, cy2 - cy_foco)
+
+                            # Se a pedra está dentro da área de influência, entra pro bando!
+                            if dist <= DISTANCIA_CONEXAO:
+                                bando_atual.append(p2)
+                                visitados.add(j)
+                                # Coloca ela na fila para a área de influência dela também ser checada!
+                                fila_de_expansao.append(p2)
+
+                # Guarda o bando que acabamos de formar
+                todos_os_bandos.append(bando_atual)
+
+            # ==========================================
+            # PASSO 3: Sobrevivência do Mais Forte
+            # ==========================================
+            if todos_os_bandos:
+                # A função max() com 'key=len' pega automaticamente a lista que tem mais itens!
+                maior_bando = max(todos_os_bandos, key=len)
+                pedras_aprovadas = maior_bando
+            else:
+                pedras_aprovadas = []
         else:
-            # Pedra DEITADA (ex: o 6|6). A largura é maior que a altura.
-            # O OpenCV também deu ~90 graus, mas nós MANTEMOS os 90
-            # para o CSS girar a pedra e deitá-la na tela!
-            angulo_corrigido = angulo_cv
+            pedras_aprovadas = candidatos
 
-        lista_final.append({
-            'valor': p['valor'],
-            'x': cx,
-            'y': cy,
-            'angulo': angulo_corrigido
-        })
 
-    ultima_leitura_pedras = lista_final
+        # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
+        pedras_aprovadas.sort(key=lambda x: x['centro'][1])
 
-    # ONDE ESTAMOS A OLHAR?
-    if modo_leitura == 'mesa':
+        # =================================================================
+        # --- MEMÓRIA INDIVIDUAL (O MAPA DA MESA) ---
+        # =================================================================
+
+        lista_final = []
+
+        DISTANCIA_TOLERANCIA = 5 # Se a pedra está no mesmo lugar (margem de 5px), é a mesma.
+
+        pedras_vistas_agora = []
+        valor_pedra = None
+        duplicada = None
+
+        for d in pedras_aprovadas:
+            # Tratando de forma direta quando no modo de seleção da mão do jogador
+            if modo_leitura != 'mesa':
+                # Pega a contagem real
+                pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
+                # Adiciona na lista que vai para a Web
+                valor_pedra = f"{pts_cima}|{pts_baixo}"
+                cx_nova, cy_nova = d['centro']
+            else:
+                cx_nova, cy_nova = d['centro']
+                pedra_reconhecida_memoria = None
+                menor_distancia = float('inf')
+
+                # 1. Procura qual pedra da memória está mais perto desta caixa atual
+                for p_mem in cache_pedras:
+                    cx_mem, cy_mem = p_mem['centro']
+                    dist = math.hypot(cx_mem - cx_nova, cy_mem - cy_nova)
+
+                    if dist < menor_distancia:
+                        menor_distancia = dist
+                        if dist < DISTANCIA_TOLERANCIA:
+                            pedra_reconhecida_memoria = p_mem
+
+                # 2. Decide se aproveita a memória ou se gasta CPU para recalcular
+                if pedra_reconhecida_memoria:
+                    # ACHOU NO MAPA: É a mesma pedra de antes! Copia o valor.
+                    valor_pedra = pedra_reconhecida_memoria['valor']
+                else:
+                    # LUGAR NOVO: Pedra recém-colocada (ou a mesa foi arrastada). Recalcula!
+                    pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
+                    valor_pedra = f"{pts_cima}|{pts_baixo}"
+            # 3. Adiciona na lista de hoje (atualizando a coordenada exata para não haver "drift")
+            if not valor_ja_existe(valor_pedra, modo_leitura, pedras_vistas_agora):
+                pedras_vistas_agora.append({
+                    'centro': (cx_nova, cy_nova),
+                    'rect_pedra': d['rect_pedra'],
+                    'rect_traco': d['rect_traco'],
+                    'valor': valor_pedra,
+                    'ultima_vez_vista': tempo_atual
+                })
+            else:
+                # Imprime apenas se NÃO for a mesa para evitar poluir o log
+                if modo_leitura != 'mesa':
+                    print(f"🚫 Duplicata rejeitada: {valor_pedra} (já pertence a outro ou lida duas vezes)")
+                    duplicada = valor_pedra
+                    continue
+
+        # print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
+
+        ## Bloco de debug de dados das pedras
+        # global ler_info
+        # if ler_info and modo_leitura != 'mesa':
+        #     print(pedras_vistas_agora)
+        #     ler_info = False
+
+        # 4. RECUPERAÇÃO DE FANTASMAS (Mão na frente da câmera)
+        # Se uma pedra antiga não foi vista agora, mas tem tempo de vida, nós a mantemos viva
+        if modo_leitura == 'mesa':
+            for p_mem in cache_pedras:
+                espaco_ocupado = False
+                pedra_movimentada = False
+
+                # Prepara o valor invertido para não ser enganado pela rotação (ex: 6|5 e 5|6)
+                valor_mem = p_mem['valor']
+                partes = valor_mem.split('|')
+                valor_invertido = f"{partes[1]}|{partes[0]}"
+
+                for p_agora in pedras_vistas_agora:
+                    # Regra 1: Alguém tomou o lugar físico desta pedra?
+                    dist = math.hypot(p_mem['centro'][0] - p_agora['centro'][0], p_mem['centro'][1] - p_agora['centro'][1])
+                    if dist < DISTANCIA_TOLERANCIA:
+                        espaco_ocupado = True
+
+                    # Regra 2: Esta mesma pedra foi arrastada para OUTRO lugar da mesa?
+                    if p_agora['valor'] == valor_mem or p_agora['valor'] == valor_invertido:
+                        pedra_movimentada = True
+
+                # Só restauramos o fantasma se o espaço estiver vazio, se ela não tiver
+                # fugido para outro lugar, e se a memória ainda for recente.
+                if not espaco_ocupado and not pedra_movimentada and (tempo_atual - p_mem['ultima_vez_vista']) <= TEMPO_MEMORIA:
+                    pedras_vistas_agora.append(p_mem)
+
+        # Atualiza o mapa oficial
+        cache_pedras = pedras_vistas_agora
+
+        for p in cache_pedras:
+            cx, cy = p['rect_pedra'][0]
+
+            # Desempacotamos a Largura (w) e a Altura (h)
+            w, h = p['rect_pedra'][1]
+
+            angulo_cv = p['rect_pedra'][2]
+
+            # --- A INTELIGÊNCIA DE ORIENTAÇÃO ---
+            # O CSS desenha as pedras "em pé" por padrão (0 graus).
+            if w < h:
+                # Pedra EM PÉ. O OpenCV deu ~90 graus.
+                # Subtraímos 90 para o CSS entender que é 0 graus (Vertical)
+                angulo_corrigido = angulo_cv - 90
+            else:
+                # Pedra DEITADA (ex: o 6|6). A largura é maior que a altura.
+                # O OpenCV também deu ~90 graus, mas nós MANTEMOS os 90
+                # para o CSS girar a pedra e deitá-la na tela!
+                angulo_corrigido = angulo_cv
+
+            lista_final.append({
+                'valor': p['valor'],
+                'x': cx,
+                'y': cy,
+                'angulo': angulo_corrigido
+            })
+
         ultima_leitura_pedras = lista_final
-    else:
-        # Se estivermos a escanear um jogador, salvamos as pedras na mão dele!
-        # Só atualizamos se a leitura estiver estável (para evitar salvar ruído de movimento)
-        if len(lista_final) == 7:
-            maos_jogadores[modo_leitura] = lista_final
-            print(f"✅ Mão de {modo_leitura} atualizada com {len(lista_final)} pedras")
 
+        # ONDE ESTAMOS A OLHAR?
+        if modo_leitura == 'mesa':
+            ultima_leitura_pedras = lista_final
+        else:
+            # Se estivermos a escanear um jogador, salvamos as pedras na mão dele!
+            # Só atualizamos se a leitura estiver estável (para evitar salvar ruído de movimento)
+            if len(lista_final) == 7:
+                maos_jogadores[modo_leitura] = lista_final
+                print(f"✅ Mão de {modo_leitura} atualizada com {len(lista_final)} pedras")
 
-    # Prepara frame para streaming
-    if enviar_video:
-        out = img.copy()
-        for p in cache_pedras[:20]:  # Limita desenho
-            try:
-                box_traco = np.int32(cv2.boxPoints(p['rect_traco']))
-                cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 1)
-                box_pedra = np.int32(cv2.boxPoints(p['rect_pedra']))
-                cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 1)
-            except:
-                pass
+        # Prepara frame para streaming
+        if enviar_video:
+            out = img.copy()
+            for p in cache_pedras[:20]:  # Limita desenho
+                try:
+                    box_traco = np.int32(cv2.boxPoints(p['rect_traco']))
+                    cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 1)
+                    box_pedra = np.int32(cv2.boxPoints(p['rect_pedra']))
+                    cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 1)
+                except:
+                    pass
 
-        sucesso_encode, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        if sucesso_encode:
-            ultimo_frame_processado = buffer.tobytes()
-    else:
-        ultimo_frame_processado = None
+            sucesso_encode, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if sucesso_encode:
+                ultimo_frame_processado = buffer.tobytes()
+        else:
+            ultimo_frame_processado = None
 
-    print(f"Pedras processadas: {len(lista_final)}")
+        # print(f"Pedras processadas: {len(lista_final)}")
 
 # ====================================================================
 # ENCERRAMENTO SEGURO
@@ -879,16 +902,14 @@ def action_exec():
     # Se fomos ler a mão de alguém, armamos o gatilho da foto!
     if actions['action'] == 'reset':
         resetMaoPlayers = True
-        return jsonify({"status": "sucesso"})
 
     if actions['action1'] == 'calibrar':
         modoAuto = True
-        return jsonify({"status": "sucesso"})
 
     if actions['action2'] == 'valor_zoom':
-        return jsonify({"status": "sucesso", "zoom": zoom_factor})
+        return jsonify({"zoom": zoom_factor})
 
-
+    return jsonify({"status": "sucesso"})
 
 @app.route('/api/estado_jogo')
 def estado_jogo():

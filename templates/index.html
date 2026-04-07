@@ -40,7 +40,7 @@
         #arena {
             display: grid;
             /* Aumentamos as colunas laterais de 250px para 350px */
-            grid-template-columns: minmax(250px, 350px) 1fr minmax(250px, 350px);
+            grid-template-columns: minmax(250px, 300px) 1fr minmax(250px, 300px);
             grid-template-rows: auto 1fr auto;
             gap: 20px;
             max-width: 1900px;
@@ -269,7 +269,8 @@
 </head>
 <body>
 
-    <audio id="somSucesso" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+<!--     <audio id="somSucesso" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio> -->
+    <audio id="somSucesso" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" ></audio>
 
     <div id="menu-btn">☰</div>
 
@@ -739,7 +740,7 @@
         let animationId = null;
         let ultimoUpdate = 0;
         const INTERVALO_UPDATE = 1000; // 1 segundo
-        const INTERVALO_FIREBASE = 3000; // 3 segundos
+        const INTERVALO_FIREBASE = 5000; // 5 segundos
         let start = true;
 
         function mostrarToast(mensagem) {
@@ -898,7 +899,7 @@
                 for (let i = 1; i <= 4; i++) {
                     if (active === "active") {
                         // Extração segura dos dados (Lida com o fato do JSON ter stringValue e integerValue)
-                        const nome = campos[`nome${i}`] ? `Jogador - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
+                        const nome = campos[`nome${i}`] ? `Jogador${i} - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
                         const pontos = campos[`jogador${i}`] ? parseInt(campos[`jogador${i}`].integerValue) : 0;
                         const raios = campos[`raios${i}`] ? parseInt(campos[`raios${i}`].integerValue) : 0;
                         const lambretas = campos[`lambretas${i}`] ? parseInt(campos[`lambretas${i}`].integerValue) : 0;
