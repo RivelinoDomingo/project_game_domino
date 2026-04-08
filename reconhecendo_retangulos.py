@@ -37,8 +37,14 @@ def pipeline_blackhat(img_path):
 
     # O SEGREDO 1: Fechar os "buracos" pretos dos traços e bolinhas!
     # Usamos um kernel bem grande (ex: 25x25) para a mancha branca engolir o traço
-    kernel_silhueta = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    kernel_silhueta = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
     mask_pedra_solida = cv2.morphologyEx(mask_branca, cv2.MORPH_CLOSE, kernel_silhueta)
+
+    # --- A MÁGICA DA MARGEM DE SEGURANÇA ---
+    # Encolhe a máscara sólida de 5 a 7 pixels para DENTRO.
+    # Isso solta a borda da sombra, mas preserva o meio onde fica o traço!
+    kernel_encolhimento = np.ones((6, 6), np.uint8)
+    mask_pedra_solida = cv2.erode(mask_pedra_solida, kernel_encolhimento, iterations=1)
 
     # ====================================================================
     # 2. ENCONTRAR OS DETALHES ESCUROS (Blackhat)
@@ -63,24 +69,12 @@ def pipeline_blackhat(img_path):
 
     contours, _ = cv2.findContours(mask_soldada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Se quiser encontrar o retângulo do traço, use findContours na linha_mask
-    # ... (seu código existente de extração de traço)
-
-    # kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (8, 8))
-    # blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
-    #
-    # _, mask_bh = cv2.threshold(blackhat, 100, 255, cv2.THRESH_BINARY)
-    # kernel_close = np.ones((2,2), np.uint8)
-    # mask_soldada = cv2.morphologyEx(mask_bh, cv2.MORPH_CLOSE, kernel_close)
-    #
-    # contours, _ = cv2.findContours(mask_soldada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     candidatos = []
     out = img.copy()
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < 10 or area > 800:
+        if area < 10 or area > 400:
             continue
 
         rect = cv2.minAreaRect(cnt)
@@ -92,6 +86,23 @@ def pipeline_blackhat(img_path):
         linha_comprimento = max(w_box, h_box)
         linha_espessura = min(w_box, h_box)
         ratio = linha_comprimento / linha_espessura
+
+
+        if w_box > h_box:
+            rect_pedra = ((cx, cy), (30, 61), angle)
+        else:
+            rect_pedra = ((cx, cy), (61, 30), angle)
+
+
+        # Dentro do for, após rect_pedra (se criado)
+        # img_debug = img.copy()
+        # cv2.drawContours(img_debug, [cnt], -1, (255, 0, 0), 2)          # contorno azul
+        # box_traco = cv2.boxPoints(rect)
+        # cv2.drawContours(img_debug, [np.int32(box_traco)], 0, (0, 255, 0), 2)  # traço verde
+        # box_pedra = cv2.boxPoints(rect_pedra)
+        # cv2.drawContours(img_debug, [np.int32(box_pedra)], 0, (0, 0, 255), 2)   # pedra vermelha
+        # cv2.imshow('Debug', img_debug)
+        # cv2.waitKey(0)
 
         # --- A NOVA BLINDAGEM DE TAMANHO ---
         # A sua pedra projetada tem 30px de largura.
@@ -105,13 +116,15 @@ def pipeline_blackhat(img_path):
         # Adicionamos os limites de comprimento no IF principal
         if ratio > 6.0 and (LIMITE_MIN_TRACO <= linha_comprimento <= LIMITE_MAX_TRACO) and (1 <= linha_espessura <= LIMITE_MAX_ESPESSURA):
 
-            if w_box > h_box:
-                rect_pedra = ((cx, cy), (30, 61), angle)
-            else:
-                rect_pedra = ((cx, cy), (61, 30), angle)
+            # if w_box > h_box:
+            #     rect_pedra = ((cx, cy), (30, 61), angle)
+            # else:
+            #     rect_pedra = ((cx, cy), (61, 30), angle)
             # --- A SUA IDEIA APLICADA AQUI ---
             # 1. Criar uma máscara preta do mesmo tamanho da imagem
             mask_box = np.zeros(gray.shape, dtype=np.uint8)
+
+
 
             # 2. Desenhar a nossa caixa verde preenchida de branco nessa máscara
             box_pedra_pts = np.int32(cv2.boxPoints(rect_pedra))
@@ -216,7 +229,9 @@ def pipeline_blackhat(img_path):
         print(f"Pedra encontrada: {texto}")
 
     print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
-    cv2.imshow("Mascara Limpa (Blackhat)", mask_tracos_filtrada)
+    cv2.imshow("Mascara Limpa (Blackhat)", mask_pedra_solida)
+    cv2.imshow("Mask Branca", mask_branca)
+    cv2.imshow("Black hat", mask_soldada)
     cv2.imshow("Resultado Final Limpo", out)
     cv2.waitKey(0)
     cv2.destroyAllWindows()

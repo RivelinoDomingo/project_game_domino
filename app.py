@@ -10,7 +10,8 @@ from collections import deque
 app = Flask(__name__)
 
 # Configurações otimizadas
-# device = 'http://192.168.1.103:5000/video?video_size=1920x1080'
+# device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
+# device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
 device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 1.0
 ultima_leitura_pedras = []
@@ -293,7 +294,7 @@ def loop_da_camera():
     # ========================================================
     fps_video = camera.get(cv2.CAP_PROP_FPS)
     if fps_video == 0 or math.isnan(fps_video):
-        fps_video = 30.0 # Valor padrão de segurança
+        fps_video = 10.0 # Valor padrão de segurança
 
     atraso_por_frame = 1.0 / fps_video
 
@@ -351,27 +352,21 @@ def loop_da_camera():
 sentido = 'caindo' # Vai ditar o sentido de incremento da função autozoom.
 zoom_up = 0.0
 zoom_down = 0.0
-zoom_prev = 0.0
 first_zoom = True
-zoom_auto = False
 
 def automatic_zoom(contornos, tam_traco=26, atual_zoom=1.0):
-
-    global processar_grupos, zoom_factor, sentido, range_zoom
-    global zoom_prev, zoom_up, zoom_down, first_zoom
+    global processar_grupos, zoom_factor, sentido
+    global first_zoom, zoom_up, zoom_down
     metricas = []
-    first_pass = True
 
+    # 1. Filtro Blindado (Isto continua perfeito)
     for cnt in contornos:
         area = cv2.contourArea(cnt)
-        if area < 10 or area > 200:
-            continue
+        if area < 10 or area > 500: continue
 
         rect = cv2.minAreaRect(cnt)
         (cx, cy), (w_box, h_box), angle = rect
-
-        if w_box == 0 or h_box == 0:
-            continue
+        if w_box == 0 or h_box == 0: continue
 
         linha_comprimento = max(w_box, h_box)
         linha_espessura = min(w_box, h_box)
@@ -379,55 +374,60 @@ def automatic_zoom(contornos, tam_traco=26, atual_zoom=1.0):
 
         if 15.0 > ratio > 5.0:
             metricas.append(linha_comprimento)
-            # print(f"Comprimento: {linha_comprimento}    -    Espessura: {linha_espessura}    -    Ratio: {ratio}   ##  Zoom: {zoom_factor}")
-            # time.sleep(0.5)
 
+    # Inicializa as variáveis de scanner se for a primeira vez
     if first_zoom:
         zoom_up = atual_zoom
         zoom_down = atual_zoom
         first_zoom = False
 
-    # Auto calibração
+    # 2. Processa as médias
     mediaFinal = 0
     medias = processar_grupos(metricas)
-
     for i in medias:
         if i >= 7:
-            # print(f"Valor médio de: {i}px")
             mediaFinal = i
 
-    # print(f"Valor de zoom_factor: {zoom_factor}")
-    # time.sleep(0.5)
-
+    # ================================================================
+    # CÁLCULO DIRETO (A Matemática Exata)
+    # ================================================================
     if mediaFinal > 0.0:
+        # Achamos o traço! Seja por sorte inicial ou pelo Scanner Cego!
         fator_correcao = tam_traco / mediaFinal
         zoom_result = zoom_factor * fator_correcao
+
+        # Reseta o scanner para a próxima vez que o botão for apertado
+        first_zoom = True
+        sentido = 'caindo'
 
         print(f"🎯 Auto-Calibragem Concluída!")
         print(f"Traço atual: {mediaFinal:.1f} -> Alvo: {tam_traco}")
         print(f"Novo Zoom ajustado para: {zoom_result:.2f}x")
-        first_zoom = True
 
+        # Retorna TRUE (sucesso) e o zoom perfeito calculado
         return True, zoom_result
 
+    # ================================================================
+    # O SCANNER CEGO (A Busca Grossa)
+    # ================================================================
     else:
-        if not range_zoom:
-            if zoom_down >= 0.2 and sentido == 'caindo':
-                zoom_down = zoom_down - 0.02
+        # A câmera não viu traços! Começa a oscilar o zoom.
+        if sentido == 'caindo':
+            zoom_down = zoom_down - 0.02
+            if zoom_down < 0.2:
                 sentido = 'subindo'
-                if zoom_down < 0.2:
-                    sentido = 'subindo'
-                    print(f"Zoom_factor no minimo: {zoom_factor}, Subindo")
-                return False, zoom_down
-            elif zoom_up <= 2.0 and sentido == 'subindo' or zoom_down < 0.2:
-                zoom_up = zoom_up + 0.02
+                print(f"Lente bateu no limite mínimo (0.2). Invertendo busca...")
+            return False, max(zoom_down, 0.2)
+
+        elif sentido == 'subindo':
+            zoom_up = zoom_up + 0.02
+            if zoom_up > 2.0:
                 sentido = 'caindo'
-                if zoom_up > 2.0:
-                    sentido = 'caindo'
-                    zoom_down = 1.0
-                    zoom_up = 1.0
-                    print(f"Zoom_factor no minimo: {zoom_factor}, Descendo")
-                return False, zoom_up
+                # Reseta tudo para não entrar em loop infinito
+                zoom_down = 1.0
+                zoom_up = 1.0
+                print(f"Lente bateu no limite máximo (2.0). Recomeçando varredura...")
+            return False, min(zoom_up, 2.0)
 
 def processar_frame(img, tempo_atual):
     """Processa o frame de forma otimizada"""
@@ -489,6 +489,12 @@ def processar_frame(img, tempo_atual):
     kernel_silhueta = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
     mask_pedra_solida = cv2.morphologyEx(mask_branca, cv2.MORPH_CLOSE, kernel_silhueta)
 
+      # --- A MÁGICA DA MARGEM DE SEGURANÇA ---
+    # Encolhe a máscara sólida de 5 a 7 pixels para DENTRO.
+    # Isso solta a borda da sombra, mas preserva o meio onde fica o traço!
+    kernel_encolhimento = np.ones((6, 6), np.uint8)
+    mask_pedra_solida = cv2.erode(mask_pedra_solida, kernel_encolhimento, iterations=1)
+
     # ====================================================================
     # 2. ENCONTRAR OS DETALHES ESCUROS (Blackhat)
     # ====================================================================
@@ -512,23 +518,19 @@ def processar_frame(img, tempo_atual):
 
     contours, _ = cv2.findContours(mask_soldada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    global actions, zoom_change, automatic_zoom, zoom_prev, zoom_auto
+    global actions, zoom_change, automatic_zoom, zoom_prev
 
-    if modoAuto and not zoom_auto:
-        zoom_prev = zoom_factor
-        zoom_auto = True
 
     tamanho = 24    # Tamanho de traço desejado
     if modoAuto:
         CP_INTERVALO_SEGUNDOS = INTERVALO_SEGUNDOS
         INTERVALO_SEGUNDOS = 0.1
-        zoom_sucess, zoom_factor = automatic_zoom(contours, tamanho, zoom_prev)
+        zoom_sucess, zoom_factor = automatic_zoom(contours, tamanho, zoom_factor)
         if zoom_sucess:
             # Desliga o modo auto para o jogo normal continuar com o zoom perfeito!
             actions['action1'] = None
             zoom_change = True
             modoAuto = False
-            zoom_auto = False
             INTERVALO_SEGUNDOS = CP_INTERVALO_SEGUNDOS
     else:
         # Processa contornos (restante do código similar ao original, mas otimizado)
@@ -549,7 +551,7 @@ def processar_frame(img, tempo_atual):
             linha_espessura = min(w_box, h_box)
             ratio = linha_comprimento / linha_espessura
 
-            if ratio > 6.0 and tamanho - 3 <= linha_comprimento <= tamanho + 3 and 1 <= linha_espessura <= 6:
+            if ratio > 6.0 and tamanho - 3 <= linha_comprimento <= tamanho + 3 and 1 <= linha_espessura <= 5:
                 if w_box > h_box:
                     rect_pedra = ((cx, cy), (30, 61), angle)
                 else:
