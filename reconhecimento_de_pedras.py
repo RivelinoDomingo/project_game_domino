@@ -2,8 +2,9 @@ import cv2
 import numpy as np
 import math
 import argparse
-from skimage.morphology import skeletonize
-import sys
+import time
+# from skimage.morphology import skeletonize
+# import sys
 # from scipy.signal import find_peaks
 
 
@@ -20,11 +21,14 @@ CONFIG_VALES = {
     'distancia_filtro': 15,
     'distancia_corte': 62,
     'tamanho_kernel_morfologia': 25, # Novo parâmetro para o tamanho da fenda a ser fechada
+    'area_max': 2800,                # Area maxima das pedras
     'area_min': 800,
+    'area_ponto': 40,
 }
 
 
 def pipeline_blackhat(args):
+    time_start = time.time()
     img = cv2.imread(args.imagem)
     if img is None:
         print("Erro: Imagem não encontrada.")
@@ -48,9 +52,9 @@ def pipeline_blackhat(args):
     # blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
     # _, mask_fendas = cv2.threshold(blackhat, 80, 255, cv2.THRESH_BINARY)
     # mask_solida[cv2.dilate(mask_fendas, np.ones((2,2)), iterations=1) == 255] = 0
-    cv2.imshow("1 - Mask Solida", mask_solida)
+    # cv2.imshow("1 - Mask Solida", mask_solida)
     mask_solida = cv2.medianBlur(mask_solida, 5)
-    cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
+    # cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
 
     # Refinamento de Contornos
     cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -59,7 +63,7 @@ def pipeline_blackhat(args):
     # Melhoria
     fator_area = args.zoom ** 2
     area_min = int(CONFIG_VALES['area_min'] * fator_area)
-    area_max = int(2200 * fator_area)
+    area_max = int(CONFIG_VALES['area_max'] * fator_area)
     raio_corte = int(CONFIG_VALES['distancia_corte'] * args.zoom) # Distância é linear
 
     for c in cnts_pre:
@@ -105,7 +109,7 @@ def pipeline_blackhat(args):
                 cv2.imshow("2 - Mask Corte Usada", mask_corte)
 
         if args.debug:
-            visualizar_cortes(img_debug_final, mask_filtrada, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
+            visualizar_cortes(img_debug_final, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
 
     else:
         if contours_final:
@@ -255,6 +259,8 @@ def pipeline_blackhat(args):
         print(f"Pedra encontrada: {texto}")
 
     print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
+    time_end = time.time() - time_start
+    print(f"Tempo de duração da execução: {time_end}")
     # cv2.imshow("Pedra Solida", mask_pedra_solida)
     # cv2.imshow("Mask Branca", mask_branca)
     # cv2.imshow("Mask Soldada", mask_soldada)
@@ -309,39 +315,41 @@ def extrair_e_contar(img, rect_pedra):
     metade_baixo = warped[40:80, 0:40]
 
     def contar_bolinhas(metade):
-            gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
 
-            thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 
-            # BLINDAGEM 1: Apagar as bordas da imagem (3 pixels)
-            # Isso impede que a sombra da beirada do dominó seja contada como bolinha
-            h, w = thresh.shape
-            cv2.rectangle(thresh, (0, 0), (w, h), 0, 3)
+        # BLINDAGEM 1: Apagar as bordas da imagem (3 pixels)
+        # Isso impede que a sombra da beirada do dominó seja contada como bolinha
+        h, w = thresh.shape
+        cv2.rectangle(thresh, (0, 0), (w, h), 0, 3)
 
-            kernel = np.ones((2,2), np.uint8)
-            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        kernel = np.ones((2, 2), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
-            contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            pontos = 0
+        contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        pontos = 0
 
-            for c in contornos:
-                area = cv2.contourArea(c)
+        point_area = CONFIG_VALES['area_ponto'] * args.zoom
 
-                # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
-                if 11 < area < 80:
-                    # BLINDAGEM 2: O filtro de formato (Circularidade)
-                    perimetro = cv2.arcLength(c, True)
-                    if perimetro == 0: continue
+        for c in contornos:
+            area = cv2.contourArea(c)
 
-                    circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+            # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
+            if point_area * 0.5 < area < point_area * 1.3:
+                # BLINDAGEM 2: O filtro de formato (Circularidade)
+                perimetro = cv2.arcLength(c, True)
+                if perimetro == 0: continue
 
-                    # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
-                    if circularidade > 0.6:
-                        pontos += 1
-                # else:
-                    # print(f"Area fora do range: {area}")
-            # BLINDAGEM 3: Trava matemática máxima de um dominó
-            return min(pontos, 6)
+                circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+
+                # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
+                if circularidade > 0.6:
+                    pontos += 1
+            # else:
+                # print(f"Area fora do range: {area}")
+        # BLINDAGEM 3: Trava matemática máxima de um dominó
+        return min(pontos, 6)
 
     pts_cima = contar_bolinhas(metade_cima)
     pts_baixo = contar_bolinhas(metade_baixo)
@@ -477,7 +485,7 @@ def encontrar_pares_corte(pontos_vale, mask_pedras, raio_max=69):
 
                 # 3. Triangulação (Identificar ângulos +- 90°)
                 bonus_triangulacao = 1.0
-                dist_AB = dist
+                # dist_AB = dist
 
                 for k in range(n_pontos):
                     if k != i and k != j:
@@ -560,19 +568,32 @@ def visualizar_cortes(img_original, mask_original, contornos, pares_corte, titul
         # Score do par
         centro = ((p1[0] + p2[0])//2, (p1[1] + p2[1])//2)
         cv2.putText(debug_img, f"{score:.1f}", centro,
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 2)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
 
     # Contar objetos antes e depois
     contours_antes, _ = cv2.findContours(mask_original, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     fator_area = args.zoom ** 2
     area_min = int(CONFIG_VALES['area_min'] * fator_area)
-    area_max = int(2200 * fator_area)
+    area_max = int(CONFIG_VALES['area_max'] * fator_area)
 
     for cnt in contornos:
         area = cv2.contourArea(cnt)
         if area_max > area > area_min:
             cv2.drawContours(debug_img, [cnt], -1, 255, thickness=-1)
+            center, _, _ = cv2.minAreaRect(cnt)
+            # Converte o centro para inteiros
+            cx = int(center[0])
+            cy = int(center[1])
+
+            # Agora usa a tupla de inteiros
+            cv2.putText(debug_img,
+                        f"{area:.0f}",           # arredonda a área
+                        (cx, cy),                   # ← aqui está o fix
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.3,
+                        (255, 255, 255),
+                        1)
 
     # Adicionar texto informativo
     cv2.putText(debug_img, f"Antes: {len(contours_antes)} objetos", (10, 30),
@@ -633,4 +654,3 @@ def visualizar_vales_detalhado(img, mask_pedras, pontos_vale, titulo="Vales Dete
 if __name__ == "__main__":
     args = parse_arguments()
     pipeline_blackhat(args)
-
