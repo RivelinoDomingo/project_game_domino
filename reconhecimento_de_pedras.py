@@ -3,186 +3,147 @@ import numpy as np
 import math
 import argparse
 from skimage.morphology import skeletonize
+import sys
 # from scipy.signal import find_peaks
 
 
-parser = argparse.ArgumentParser(description='Processa imagens')
-parser.add_argument('imagem', help='Caminho para o arquivo de imagem')
-parser.add_argument('-z', '--zoom', type=float, help='Valor float para nivel de zoom da imagem, padrão 0.8')
-parser.add_argument('-p', '--proximidade', type=int, help='Distancia minima entre as pedras padrão 30')
-parser.add_argument('-d', '--debug', action='store_true', help='Ativa o modo depuração para melhor análise' )
-args = parser.parse_args()
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Processa imagens de dominó')
+    parser.add_argument('imagem', help='Caminho para o arquivo de imagem')
+    parser.add_argument('-z', '--zoom', type=float, default=1.0, help='Nível de zoom (padrão 1.0)')
+    parser.add_argument('-p', '--proximidade', type=int, default=37, help='Distância mínima entre pedras')
+    parser.add_argument('-d', '--debug', action='store_true', help='Ativa modo depuração')
+    return parser.parse_args()
 
-zoom_factor = args.zoom
-DISTANCIA_MINIMA = args.proximidade
 
-# No início do arquivo, adicione estes parâmetros para fácil ajuste:
 CONFIG_VALES = {
-    'angulo_min': 10,      # Ângulo mínimo para considerar V
-    'angulo_max': 96,      # Ângulo máximo (você já ajustou)
-    'profundidade_defect': 2000,  # Profundidade mínima do convexity defect
-    'distancia_filtro': 14,  # Distância para filtrar pontos próximos
-    'distancia_corte': 60,   # Distância máxima para linha de corte
-    'area_min': 1000,        # Área minima dos contornos das pedras
+    'distancia_filtro': 15,
+    'distancia_corte': 62,
+    'tamanho_kernel_morfologia': 25, # Novo parâmetro para o tamanho da fenda a ser fechada
+    'area_min': 800,
 }
 
-if args.proximidade is None:
-    DISTANCIA_MINIMA = 37
 
-debug_mode = args.debug
-
-if zoom_factor is None:
-        zoom_factor = 1.0
-
-if debug_mode:
-    print("MODO DEBUG ATIVADO - Saida Turbinada")
-
-def pipeline_blackhat(img_path):
-    img = cv2.imread(img_path)
+def pipeline_blackhat(args):
+    img = cv2.imread(args.imagem)
     if img is None:
         print("Erro: Imagem não encontrada.")
         return
+
     # Área de zoom
-    img = cv2.resize(img, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
+    img = cv2.resize(img, None, fx=args.zoom, fy=args.zoom, interpolation=cv2.INTER_LINEAR)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-   # ====================================================================
-    # 1. ENCONTRAR A SILHUETA SÓLIDA BASE
-    # ====================================================================
-    _, mask_branca = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-    contours_externos, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+   # 1. Máscara Sólida Base
+    _, mask_branca = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
+    contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # cv2.imshow("1 - Mask Branca", mask_branca)
 
-    mask_pedra_solida = np.zeros_like(mask_branca)
-    cv2.drawContours(mask_pedra_solida, contours_externos, -1, 255, thickness=cv2.FILLED)
-
-    # ====================================================================
-    # 2. O GOLPE DE ESPADA (The Blackhat Cleaver)
-    # ====================================================================
-    # O Blackhat acha as fendas escuras que separam as pedras paralelas
-    kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 12))
-    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
-
-    # cv2.imshow('1 - MaskBranca', mask_branca)
-    # cv2.imshow('1 - Mask Pedra', mask_pedra_solida)
-    # cv2.imshow('1 - BlackHat', blackhat)
-
-    # Usamos 80 (igual ao seu código) para pegar as fendas
-    _, mask_fendas = cv2.threshold(blackhat, 80, 255, cv2.THRESH_BINARY)
-
-    # Engrossamos a fenda só um pouquinho para garantir que ela rache a máscara branca
-    kernel_fenda = np.ones((2,2), np.uint8)
-    mask_fendas_grossas = cv2.dilate(mask_fendas, kernel_fenda, iterations=1)
-    # cv2.imshow("1 - Mascara Fendas", mask_fendas_grossas)
-
-    # ⚔️ FATIAMOS A MÁSCARA! A fenda rasga a pedra, e o traço faz um furo no centro.
-    mask_pedra_solida[mask_fendas_grossas == 255] = 0
-
-    # ====================================================================
-    # 3. O CURATIVO TOPOLÓGICO
-    # ====================================================================
-    # O RETR_EXTERNAL é mágico: ele ignora os furos no meio do dominó (traço),
-    # mas respeita o corte da fenda que dividiu a borda externa!
-    contours_pre_melt, _ = cv2.findContours(mask_pedra_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Redesenhamos tudo. Os furos internos somem, a pedra fica forte, e a fenda é mantida!
-    mask_pedra_solida = np.zeros_like(mask_branca)
-    cv2.drawContours(mask_pedra_solida, contours_pre_melt, -1, 255, thickness=cv2.FILLED)
-    # cv2.imshow('1 - Pedra Solida Final', mask_pedra_solida)
-    # Agora sim, aplicar erosão mais suave
-    kernel_derreter = np.ones((2, 2), np.uint8)  # Kernel menor agora
-    mask_derretida = cv2.erode(mask_pedra_solida, kernel_derreter, iterations=2)
-    # mask_derretida = mask_pedra_solida
-    # cv2.imshow('2 - Pedra Solida Final', mask_derretida)
-
-    # Limpeza da mascara
-    # 1. Encontrar os contornos
-    contornos, _ = cv2.findContours(mask_derretida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # cv2.imshow('2 - Mask derretida', mask_derretida)
-
-    # 2. Criar uma máscara preta (do mesmo tamanho da original)
-    altura, largura = mask_derretida.shape[:2]
-    mask_filtrada = np.zeros((altura, largura), dtype=np.uint8)
-
-    # 3. Filtrar e desenhar apenas os contornos com área > 800
-    area_minima = 1500
-
-    for cnt in contornos:
-        if cv2.contourArea(cnt) > area_minima:
-            cv2.drawContours(mask_filtrada, [cnt], -1, 255, thickness=cv2.FILLED)
-            # thickness=cv2.FILLED preenche o contorno completamente (recomendado para máscara)
-    # cv2.imshow('3 - Mask Filtrada', mask_filtrada)
-
-    # Substitua a chamada anterior por:
-    pontos_vale = detectar_vales_focado(mask_filtrada, gray)
-    # img_debug = img.copy()
-
-    if len(pontos_vale) > 0:
-        if debug_mode:
-            img_debug_final = visualizar_vales_detalhado(img, mask_pedra_solida, pontos_vale)
-
-        # IMPORTANTE: Encontrar o contorno principal da máscara ATUAL
-        contours_atual, _ = cv2.findContours(mask_filtrada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if contours_atual:
-            contorno_principal = max(contours_atual, key=cv2.contourArea)
-
-            # Agora sim, encontrar pares de corte usando o contorno correto
-            raio_corte = CONFIG_VALES['distancia_corte']  # Ajuste conforme necessário
-            pares_corte = encontrar_pares_corte(pontos_vale, contorno_principal, raio_corte)
-
-            # Aplicar cortes inteligentes
-            contours_depois = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, raio_corte)
-            # cv2.imshow("4 - FINAL", mask_pedra_cortada)
-            # contours_depois = cv2.findContours(mask_pedra_cortada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask_solida = np.zeros_like(gray)
+    cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
 
 
-            # for cnt in contours_depois:
-            #     area = cv2.contourArea(cnt)
-            #     if area > 800:
-            #         cv2.drawContours(img_debug, [cnt], -1, (255, 0, 0), 2)          # contorno azul
-            #         cv2.imshow('1 - Debug', img_debug)
-            #         cv2.waitKey(0)
+    # # 2. O Golpe de Espada (Blackhat para fendas internas)
+    # kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 12))
+    # blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
+    # _, mask_fendas = cv2.threshold(blackhat, 80, 255, cv2.THRESH_BINARY)
+    # mask_solida[cv2.dilate(mask_fendas, np.ones((2,2)), iterations=1) == 255] = 0
+    cv2.imshow("1 - Mask Solida", mask_solida)
+    mask_solida = cv2.medianBlur(mask_solida, 5)
+    cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
 
-            # Visualizar resultado dos cortes
-            if debug_mode:
-                img_cortes = visualizar_cortes(img_debug_final, mask_derretida, mask_derretida, contours_depois, pares_corte, "2 - Cortes Aplicados")
+    # Refinamento de Contornos
+    cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask_filtrada = np.zeros_like(gray)
 
-            # Usar a máscara cortada para o resto do pipeline
-            # mask_pedra_solida = mask_pedra_cortada
-            # cv2.imshow('3 - Máscara Final Cortada', mask_pedra_solida)
-        else:
-            print("⚠️ Nenhum contorno encontrado na máscara!")
+    # Melhoria
+    fator_area = args.zoom ** 2
+    area_min = int(CONFIG_VALES['area_min'] * fator_area)
+    area_max = int(2200 * fator_area)
+    raio_corte = int(CONFIG_VALES['distancia_corte'] * args.zoom) # Distância é linear
+
+    for c in cnts_pre:
+        if cv2.contourArea(c) > area_min:
+            cv2.drawContours(mask_filtrada, [c], -1, 255, -1)
+
+    pontos_vale = detectar_vales_por_morfologia(mask_filtrada)
+
+    kernel_derreter = np.ones((7, 7), np.uint8)
+    mask_corte = cv2.erode(mask_filtrada, kernel_derreter, iterations=3)
 
 
+    contours_final, _ = cv2.findContours(mask_filtrada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    cnt_finais = []
+    if len(pontos_vale) >= 2 and contours_final:
+        if args.debug:
+            img_debug_final = visualizar_vales_detalhado(img, mask_filtrada, pontos_vale)
+
+        # if args.debug:
+        #     cv2.imshow("2 - Mask Usada", mask_filtrada)
+
+        pares_corte = encontrar_pares_corte(pontos_vale, mask_filtrada, raio_corte)
+        cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, pares_corte)
+        max_contorno = max(cnt_finais, key=cv2.contourArea)
+        min_contorno = min(cnt_finais, key=cv2.contourArea)
+        max_contorno = cv2.contourArea(max_contorno)
+        min_contorno = cv2.contourArea(min_contorno)
+        # print(f"Maior contorno: {max_contorno}  -- Menor: {min_contorno}")
+
+        if max_contorno > area_max * 1.8:
+            print("Recalculando com mascara reduzinda!")
+            print(f"Área max. permitida: {area_max * 1.8}  --  Área min: {area_min}")
+            print(f"Área do maior Contorno: {max_contorno}  --  Menor contorno: {min_contorno}")
+            # contours_corte, _ = cv2.findContours(mask_corte, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # mask_corte = np.zeros_like(gray)
+            # contorno_corte = max(contours_corte, key=cv2.contourArea)
+            # cv2.drawContours(mask_corte, [contorno_corte], -1, 255, -1)
+
+            pares_corte = encontrar_pares_corte(pontos_vale, mask_corte, raio_corte)
+            cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, pares_corte)
+            if args.debug:
+                cv2.imshow("2 - Mask Corte Usada", mask_corte)
+
+        if args.debug:
+            visualizar_cortes(img_debug_final, mask_filtrada, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
+
+    else:
+        if contours_final:
+            cnt_finais = contours_final
+        print("⚠️ Poucos vales detectados ou nenhum contorno encontrado!")
 
 
-
-
-
-    # contours, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    #
     candidatos = []
     out = img.copy()
 
-    if debug_mode:
-        print(f"Contornos encontrados: {len(contours_depois)}")
+    if args.debug:
+        print(f"Contornos encontrados: {len(cnt_finais)}")
 
-    for cnt in contours_depois:
+    for cnt in cnt_finais:
         area = cv2.contourArea(cnt)
         # if area < 10 or area > 2200:
         #     continue
-        if   4500 > area > 500:
+        if area_max > area > area_min:
             rect = cv2.minAreaRect(cnt)
             center, size, angle = rect
-            (cx, cy), (w_box, h_box), angle = rect
+            w_box, h_box = size
 
             if w_box == 0 or h_box == 0:
+                print("Box com dimensões zeradas")
                 continue
 
             width, height = size
 
-            ratio = width/height
+            if width > height:
+                ratio = width/height
+            else:
+                ratio = height/width
+
+            if not (2.5 > ratio > 1.4):
+                print(f"Ratio fora do padrão: {ratio}")
+                continue
+
+            # print(f"Valor de ratio: {ratio}")
 
             margem = 1.1
 
@@ -193,13 +154,15 @@ def pipeline_blackhat(img_path):
                 'rect_traco': rect,
                 'centro': center
             })
-    if debug_mode:
+        else:
+            print(f"Área fora do range: {area}")
+
+    if args.debug:
         print(f"Candidatos aprovados: {len(candidatos)}")
 
 
 
     pedras_unicas = []
-    global DISTANCIA_MINIMA
 
     for cand in candidatos:
         cx1, cy1 = cand['centro']
@@ -207,7 +170,7 @@ def pipeline_blackhat(img_path):
 
         for p in pedras_unicas:
             cx2, cy2 = p['centro']
-            if math.hypot(cx2 - cx1, cy2 - cy1) < DISTANCIA_MINIMA:
+            if math.hypot(cx2 - cx1, cy2 - cy1) < args.proximidade:
                 duplicata = True
                 break
 
@@ -218,7 +181,7 @@ def pipeline_blackhat(img_path):
     # ==========================================
     # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
     # ==========================================
-    DISTANCIA_CONEXAO = 100  # Tamanho da "Área de influência" de cada pedra
+    DISTANCIA_CONEXAO = 200  # Tamanho da "Área de influência" de cada pedra
 
     visitados = set()
     todos_os_bandos = []
@@ -365,7 +328,7 @@ def extrair_e_contar(img, rect_pedra):
                 area = cv2.contourArea(c)
 
                 # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
-                if 32 < area < 85:
+                if 11 < area < 80:
                     # BLINDAGEM 2: O filtro de formato (Circularidade)
                     perimetro = cv2.arcLength(c, True)
                     if perimetro == 0: continue
@@ -373,9 +336,10 @@ def extrair_e_contar(img, rect_pedra):
                     circularidade = 4 * np.pi * (area / (perimetro * perimetro))
 
                     # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
-                    if circularidade > 0.2:
+                    if circularidade > 0.6:
                         pontos += 1
-
+                # else:
+                    # print(f"Area fora do range: {area}")
             # BLINDAGEM 3: Trava matemática máxima de um dominó
             return min(pontos, 6)
 
@@ -388,444 +352,238 @@ def extrair_e_contar(img, rect_pedra):
 
     return pts_cima, pts_baixo
 
+# ====================================================================
+# SUBSISTEMA DE LOCALIZAÇÂO DE VALES
+# ====================================================================
 
-'''
-def detectar_vales_em_v(mask_pedras, gray_img):
+def detectar_vales_por_morfologia(mask_solida):
     """
-    Detecta os vales em V entre pedras de dominó encostadas
+    Aplica a ideia de preencher as fendas e subtrair a imagem original
+    para isolar os vales.
     """
-    # 1. Encontrar o esqueleto da máscara para achar a linha central
-    skeleton = skeletonize(mask_pedras // 255).astype(np.uint8) * 255
+    # 1. 'Massa Corrida' (Fechamento)
+    k_size = CONFIG_VALES['tamanho_kernel_morfologia']
+    kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
 
-    # 2. Detectar cantos (os V's) usando Harris Corner Detection
-    corners = cv2.cornerHarris(np.float32(mask_pedras), blockSize=5, ksize=3, k=0.04)
+    mask_fechada = cv2.morphologyEx(mask_solida, cv2.MORPH_CLOSE, kernel_fechamento)
 
-    # Dilatar os cantos para pegar bem os pontos de estrangulamento
-    corners = cv2.dilate(corners, None)
+    # 2. Subtração (O Pulo do Gato)
+    mask_vales = cv2.subtract(mask_fechada, mask_solida)
+    if args.debug:
+        cv2.imshow("3 - Mask Vales", mask_vales) # Descomente se precisar debugar
 
-    # Threshold para pegar apenas os cantos mais fortes (os V's entre pedras)
-    corner_threshold = 0.01 * corners.max()
-    corner_mask = (corners > corner_threshold).astype(np.uint8) * 255
+    # 3. Extrair os Pontos
+    cnts_vales, _ = cv2.findContours(mask_vales, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 3. Encontrar os pontos de mínimo (estrangulamentos) no contorno
-    contours, _ = cv2.findContours(mask_pedras, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    pontos_encontrados = []
+    for c in cnts_vales:
+        cx, cy = cv2.minAreaRect(c)[0]
+        area = cv2.contourArea(c)
+        # Correção: passar como uma tupla contendo a coordenada e a área
+        pontos_encontrados.append(([cx, cy], area))
 
-    pontos_corte = []
+    return agrupar_pontos_proximos(pontos_encontrados, int(CONFIG_VALES['distancia_filtro'] * args.zoom))
 
-    if contours:
-        # Pegar o maior contorno (grupo de pedras)
-        main_contour = max(contours, key=cv2.contourArea)
-
-        # Suavizar o contorno para reduzir ruído
-        epsilon = 0.001 * cv2.arcLength(main_contour, True)
-        approx = cv2.approxPolyDP(main_contour, epsilon, True)
-
-        # Analisar curvatura ao longo do contorno
-        for i in range(len(approx)):
-            # Pegar 3 pontos consecutivos
-            p1 = approx[i][0]
-            p2 = approx[(i + 1) % len(approx)][0]
-            p3 = approx[(i + 2) % len(approx)][0]
-
-            # Calcular ângulo entre os segmentos
-            v1 = p1 - p2
-            v2 = p3 - p2
-
-            # Normalizar vetores
-            n1 = np.linalg.norm(v1)
-            n2 = np.linalg.norm(v2)
-
-            if n1 > 0 and n2 > 0:
-                v1_norm = v1 / n1
-                v2_norm = v2 / n2
-
-                # Produto escalar para achar o ângulo
-                cos_angle = np.clip(np.dot(v1_norm, v2_norm), -1.0, 1.0)
-                angle = np.arccos(cos_angle) * 180 / np.pi
-
-                # Ângulos agudos (< 120°) indicam vales em V
-                if 10 < angle < 120:
-                    # Verificar se é um ponto de estrangulamento (distância para o outro lado)
-                    pontos_corte.append(p2)
-
-    return np.array(pontos_corte)
-
-def cortar_nos_vales(mask_pedra_solida, pontos_corte):
+def agrupar_pontos_proximos(dados_pontos, raio=5):
     """
-    Aplica cortes nos pontos de vale detectados
+    Recebe uma lista no formato [ ([cx, cy], area), ... ]
+    Ordena por área para garantir a sobrevivência do ponto mais forte
+    sem perder a performance do NumPy.
     """
-    if len(pontos_corte) < 2:
-        return mask_pedra_solida
+    if len(dados_pontos) == 0:
+        return np.array([])
+
+    # 1. O Pulo do Gato: Ordenar do maior para o menor (pela área)
+    # Assim, o primeiro ponto de qualquer aglomeração SEMPRE será o "mais forte"
+    dados_ordenados = sorted(dados_pontos, key=lambda x: x[1], reverse=True)
+
+    # 2. Separar apenas as coordenadas para a matemática vetorial do NumPy
+    pontos = np.array([item[0] for item in dados_ordenados])
+
+    finais = []
+    visitados = np.zeros(len(pontos), dtype=bool)
+
+    for i in range(len(pontos)):
+        if visitados[i]:
+            continue
+
+        # Como ordenamos antes, este p_atual é garantidamente o de MAIOR ÁREA na vizinhança
+        p_atual = pontos[i]
+        finais.append(p_atual.astype(int))
+
+        # Magia do NumPy: Calcula a distância deste ponto para TODOS os outros de uma vez
+        distancias = np.linalg.norm(pontos - p_atual, axis=1)
+
+        # Marca como 'visitado' (descarta) todos que estiverem dentro do raio de tolerância.
+        # Os que estão sendo descartados têm área menor ou igual ao p_atual.
+        visitados[distancias < raio] = True
+
+    return np.array(finais)
+# ====================================================================
+# SUBSISTEMA DE CORTES REFATORADO E OTIMIZADO
+# ====================================================================
+
+def encontrar_pares_corte(pontos_vale, mask_pedras, raio_max=69):
+    """
+    Vetorizado. Usa a máscara sólida em vez de polígonos para evitar
+    o problema de pedras isoladas (ilhas) sendo ignoradas.
+    """
+    if len(pontos_vale) < 2:
+        return []
+
+    pontos = np.array(pontos_vale)
+    n_pontos = len(pontos)
+
+    diffs = pontos[:, np.newaxis, :] - pontos[np.newaxis, :, :]
+    dist_matrix = np.linalg.norm(diffs, axis=-1)
+
+    pares_candidatos = []
+    altura_img, largura_img = mask_pedras.shape[:2]
+
+    for i in range(n_pontos):
+        for j in range(i + 1, n_pontos):
+            dist = dist_matrix[i, j]
+
+            if dist < raio_max:
+                # 2. NOVA Verificação Rápida e Robusta de Interseção:
+                # Testamos 3 pontos internos ao longo da linha (25%, 50% e 75%)
+                # para evitar falsos negativos caso a pedra tenha bordas irregulares.
+
+                pA = pontos[i]
+                pB = pontos[j]
+
+                # Fatores de interpolação (o quão longe estamos de A em direção a B)
+                fracoes = [0.25, 0.50, 0.75]
+
+                linha_valida = False
+                for f in fracoes:
+                    # Calcula o ponto exato naquela fração da linha
+                    pt_amostra = pA + (pB - pA) * f
+                    mx, my = int(pt_amostra[0]), int(pt_amostra[1])
+
+                    # Checagem de segurança dos limites da imagem
+                    if 0 <= my < altura_img and 0 <= mx < largura_img:
+                        # Se achou pelo menos um pixel branco forte, a linha cruza a pedra
+                        if mask_pedras[my, mx] > 0:
+                            linha_valida = True
+                            break # Otimização: não precisa testar as outras frações
+
+                # Se após testar os 3 pontos todos caíram no fundo preto, descarta o par.
+                if not linha_valida:
+                    continue
+
+                # Pontuação base (distância)
+                score = 100.0 / (1.0 + dist)
+
+                # 3. Triangulação (Identificar ângulos +- 90°)
+                bonus_triangulacao = 1.0
+                dist_AB = dist
+
+                for k in range(n_pontos):
+                    if k != i and k != j:
+                        dist_AC = dist_matrix[i, k]
+
+                        # Usando a sua margem de proporção testada
+                        dist_real = 65 * args.zoom
+                        # if (dist_AB * 1.7) < dist_AC < (dist_AB * 3.2):
+                        if dist_real > dist_AC > dist_real * 0.5:
+                            # print(f"Corte Dentro do range: dist_AB: {dist_AB} -- dist_AC: {dist_AC}")
+                            v1 = pontos[j] - pontos[i]
+                            v2 = pontos[k] - pontos[i]
+                            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+
+                            if n1 > 0 and n2 > 0:
+                                cos_theta = np.dot(v1, v2) / (n1 * n2)
+                                if abs(cos_theta) < 0.35:
+                                    bonus_triangulacao = 2.0
+                                    break
+                #         # else:
+                        #     print(f"Corte fora do range: dist_AB: {dist_AB} -- dist_AC: {dist_AC}")
+                score *= bonus_triangulacao
+                pares_candidatos.append((i, j, score))
+
+    # Ordenar pelos melhores cortes
+    pares_candidatos.sort(key=lambda x: x[2], reverse=True)
+
+    # Evitar reutilização de pontos
+    pares_finais = []
+    pontos_usados = set()
+
+    for i, j, score in pares_candidatos:
+        if i not in pontos_usados and j not in pontos_usados:
+            pares_finais.append((pontos[i], pontos[j], score))
+            pontos_usados.add(i)
+            pontos_usados.add(j)
+
+    return pares_finais
+
+def cortar_nos_vales_inteligente(mask_pedra_solida, pontos_vale, pares_corte):
+    """
+    Aplica as linhas de corte geradas pelo algoritmo otimizado.
+    """
+    if not pares_corte:
+        contours, _ = cv2.findContours(mask_pedra_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        return contours
 
     mask_cortada = mask_pedra_solida.copy()
 
-    # Para cada par de pontos de vale opostos
-    for i in range(0, len(pontos_corte), 2):
-        if i + 1 < len(pontos_corte):
-            p1 = tuple(pontos_corte[i])
-            p2 = tuple(pontos_corte[i+1])
+    for p1, p2, _ in pares_corte:
+        cv2.line(mask_cortada, p1, p2, 0, thickness=2)
+        cv2.circle(mask_cortada, p1, 2, 0, -1)
+        cv2.circle(mask_cortada, p2, 2, 0, -1)
 
-            # Verificar se os pontos estão em lados opostos
-            dist = np.linalg.norm(np.array(p1) - np.array(p2))
-            if dist < CONFIG_VALES['distancia_corte']:  # Threshold de distância para vales opostos
-                # Desenhar linha de corte
-                cv2.line(mask_cortada, p1, p2, 0, thickness=3)
+    contours_apos, _ = cv2.findContours(mask_cortada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    return mask_cortada
+    return contours_apos
 
-def refinar_separacao_pedras(mask_fatiada_final, gray_img):
+# ====================================================================
+# FUNÇÕES DE DEBUG VISUAL (Mantidas inalteradas)
+# ====================================================================
+
+# Função de visualização dos cortes
+def visualizar_cortes(img_original, mask_original, contornos, pares_corte, titulo="Análise de Cortes"):
     """
-    Versão melhorada da separação de pedras usando detecção de vales
+    Visualiza os cortes aplicados na máscara
     """
-    # 1. Encontrar esqueleto para ter a linha média
-    skeleton = skeletonize(mask_fatiada_final // 255).astype(np.uint8) * 255
-
-    # 2. Transformada de distância para achar os estrangulamentos
-    dist_transform = cv2.distanceTransform(mask_fatiada_final, cv2.DIST_L2, 5)
-
-    # Normalizar
-    dist_transform = cv2.normalize(dist_transform, None, 0, 1.0, cv2.NORM_MINMAX)
-
-    # Encontrar mínimos locais (onde as pedras se tocam)
-    kernel = np.ones((15, 15), np.uint8)
-    local_min = cv2.erode(dist_transform, kernel)
-    local_min = (dist_transform == local_min) & (dist_transform < 0.3)
-
-    # 3. Watershed para separação precisa
-    # Preparar marcadores
-    _, markers = cv2.connectedComponents((dist_transform > 0.5).astype(np.uint8))
-    markers = markers + 1
-    markers[local_min] = 0
-
-    # Aplicar watershed
-    img_color = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
-    cv2.watershed(img_color, markers)
-
-    # Criar máscara separada
-    mask_separada = np.zeros_like(mask_fatiada_final)
-    mask_separada[markers > 1] = 255
-
-    # 4. Remover linhas de watershed muito grossas com morfologia
-    kernel_clean = np.ones((3, 3), np.uint8)
-    mask_separada = cv2.morphologyEx(mask_separada, cv2.MORPH_CLOSE, kernel_clean)
-
-    return mask_separada
-'''
-'''
-def detectar_vales_curvatura_avancado(mask_pedras, gray_img):
-    """
-    Versão otimizada do método de curvatura com múltiplas estratégias
-    """
-    contours, _ = cv2.findContours(mask_pedras, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not contours:
-        return np.array([])
-
-    main_contour = max(contours, key=cv2.contourArea)
-    pontos_vale = []
-
-    # Estratégia 1: Diferentes níveis de suavização do contorno
-    for suavizacao in [0.001, 0.002, 0.003, 0.005]:
-        epsilon = suavizacao * cv2.arcLength(main_contour, True)
-        approx = cv2.approxPolyDP(main_contour, epsilon, True)
-
-        # Estratégia 2: Diferentes tamanhos de janela para análise de curvatura
-        for janela in [2, 3, 4, 5]:
-            for i in range(len(approx)):
-                # Pegar pontos com espaçamento variável
-                idx_antes = (i - janela) % len(approx)
-                idx_depois = (i + janela) % len(approx)
-
-                p1 = approx[idx_antes][0]
-                p2 = approx[i][0]
-                p3 = approx[idx_depois][0]
-
-                # Calcular vetores
-                v1 = p1 - p2
-                v2 = p3 - p2
-
-                # Normalizar
-                n1 = np.linalg.norm(v1)
-                n2 = np.linalg.norm(v2)
-
-                if n1 > 0 and n2 > 0:
-                    # Ângulo entre vetores
-                    cos_angle = np.clip(np.dot(v1/n1, v2/n2), -1.0, 1.0)
-                    angle = np.arccos(cos_angle) * 180 / np.pi
-
-                    # Critério mais flexível para vales
-                    if 20 < angle < 100:
-                        # Verificar se é um ponto de mínimo local
-                        # (a distância para o centro é menor que a média)
-                        dist_centro = np.linalg.norm(p2 - main_contour.mean(axis=0)[0])
-
-                        # Verificar vizinhança para confirmar que é um vale
-                        vizinhos = []
-                        for offset in [-3, -2, -1, 1, 2, 3]:
-                            idx_viz = (i + offset) % len(approx)
-                            vizinhos.append(approx[idx_viz][0])
-
-                        dist_media_vizinhos = np.mean([np.linalg.norm(v - main_contour.mean(axis=0)[0])
-                                                       for v in vizinhos])
-
-                        # Se é um mínimo local (mais próximo do centro que vizinhos)
-                        if dist_centro < dist_media_vizinhos * 0.95:
-                            pontos_vale.append(p2)
-
-    # Remover duplicatas
-    return filtrar_pontos_inteligente(np.array(pontos_vale))
-
-def detectar_vales_gradiente_intensidade(mask_pedras, gray_img):
-    """
-    Detecta vales analisando o gradiente de intensidade ao longo da borda
-    """
-    # Criar uma máscara da borda
-    mask_borda = cv2.Canny(mask_pedras, 50, 150)
-
-    # Dilatar para pegar uma região de busca
-    kernel = np.ones((3,3), np.uint8)
-    mask_borda = cv2.dilate(mask_borda, kernel, iterations=2)
-
-    # Encontrar pontos onde a intensidade muda bruscamente (vales)
-    # Usar Sobel para detectar bordas fortes
-    grad_x = cv2.Sobel(gray_img, cv2.CV_64F, 1, 0, ksize=3)
-    grad_y = cv2.Sobel(gray_img, cv2.CV_64F, 0, 1, ksize=3)
-
-    magnitude = np.sqrt(grad_x**2 + grad_y**2)
-    magnitude = (magnitude / magnitude.max() * 255).astype(np.uint8)
-
-    # Combinar com a máscara da borda
-    magnitude[mask_borda == 0] = 0
-
-    # Encontrar picos de magnitude (onde há mudança brusca = vales)
-    from scipy.ndimage import maximum_filter
-    local_max = maximum_filter(magnitude, size=10) == magnitude
-    pontos_alto_gradiente = np.where((magnitude > 50) & local_max)
-
-    pontos_vale = []
-    for y, x in zip(pontos_alto_gradiente[0], pontos_alto_gradiente[1]):
-        # Verificar se está próximo do contorno
-        if mask_pedras[y, x] > 0:
-            # Verificar se é um ponto de curvatura alta
-            pontos_vale.append([x, y])
-
-    return np.array(pontos_vale)
-'''
-
-def detectar_vales_multi_escala_otimizado(mask_pedras, gray_img):
-    """
-    Versão otimizada do multi-escala com mais níveis e melhor filtragem
-    """
-    todos_pontos = []
-
-    # Mais escalas para melhor cobertura
-    # escalas = [0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2]
-    escalas = [0.95, 0.97, 1.0, 1.02, 1.05]
-
-    h, w = mask_pedras.shape
-
-    for escala in escalas:
-        # Redimensionar
-        nova_h, nova_w = int(h * escala), int(w * escala)
-        mask_scaled = cv2.resize(mask_pedras, (nova_w, nova_h), interpolation=cv2.INTER_LINEAR)
-
-        # Aplicar blur para suavizar em escalas menores
-        if escala < 0.9:
-            mask_scaled = cv2.GaussianBlur(mask_scaled, (5, 5), 0)
-
-        # Detectar vales em múltiplas orientações
-        for angulo in [0, 5, 10, 15, 20]:
-        # for angulo in [0]:
-            # Rotacionar a máscara
-            if angulo != 0:
-                M = cv2.getRotationMatrix2D((nova_w/2, nova_h/2), angulo, 1.0)
-                mask_rotated = cv2.warpAffine(mask_scaled, M, (nova_w, nova_h))
-            else:
-                mask_rotated = mask_scaled
-
-            # Detectar vales na versão rotacionada
-            pontos = detectar_vales_em_v_simples(mask_rotated)
-
-            if len(pontos) > 0:
-                # Rotacionar de volta se necessário
-                if angulo != 0:
-                    M_inv = cv2.getRotationMatrix2D((nova_w/2, nova_h/2), -angulo, 1.0)
-                    for i in range(len(pontos)):
-                        p = np.array([pontos[i][0], pontos[i][1], 1])
-                        p_back = M_inv @ p
-                        pontos[i] = p_back[:2]
-
-                # Escalar coordenadas de volta
-                pontos = (pontos / escala).astype(np.int32)
-                todos_pontos.extend(pontos)
-
-    # Filtrar e agrupar pontos próximos
-    return agrupar_pontos_proximos(np.array(todos_pontos), CONFIG_VALES['distancia_filtro'])   # Como só preciso dos pontos brutos não preciso disso, é voltado para exibição
-    # return todos_pontos
-
-def detectar_vales_em_v_simples(mask_pedras):
-    """
-    Versão simplificada e rápida para usar no multi-escala
-    """
-    contours, _ = cv2.findContours(mask_pedras, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return np.array([])
-
-    main_contour = max(contours, key=cv2.contourArea)
-    pontos_vale = []
-
-    # Análise mais agressiva de curvatura
-    for i in range(len(main_contour)):
-        p1 = main_contour[i-2][0] if i >= 2 else main_contour[0][0]
-        p2 = main_contour[i][0]
-        p3 = main_contour[(i+2) % len(main_contour)][0]
-
-        v1 = p1 - p2
-        v2 = p3 - p2
-
-        n1 = np.linalg.norm(v1)
-        n2 = np.linalg.norm(v2)
-
-        if n1 > 0 and n2 > 0:
-            cos_angle = np.clip(np.dot(v1/n1, v2/n2), -1.0, 1.0)
-            angle = np.arccos(cos_angle) * 180 / np.pi
-
-            # Threshold mais baixo para pegar mais vales
-            if CONFIG_VALES['angulo_min'] < angle < CONFIG_VALES['angulo_max']:
-                pontos_vale.append(p2)
-
-    return np.array(pontos_vale)
-
-
-def agrupar_pontos_proximos(pontos, raio=15):
-    """
-    Agrupa pontos próximos e retorna o centróide de cada grupo
-    """
-    if len(pontos) == 0:
-        return pontos
-
-    grupos = []
-    pontos_usados = set()
-
-    for i, p1 in enumerate(pontos):
-        if i in pontos_usados:
-            continue
-
-        grupo = [p1]
-        pontos_usados.add(i)
-
-        for j, p2 in enumerate(pontos):
-            if j not in pontos_usados:
-                dist = np.linalg.norm(p1 - p2)
-                if dist < raio:
-                    grupo.append(p2)
-                    pontos_usados.add(j)
-
-        grupos.append(grupo)
-
-    # Calcular centróide de cada grupo
-    pontos_finais = []
-    for grupo in grupos:
-        centroide = np.mean(grupo, axis=0).astype(np.int32)
-        pontos_finais.append(centroide)
-
-    return np.array(pontos_finais)
-
-def filtrar_pontos_inteligente(pontos, distancia_min=10):
-    """
-    Filtra pontos duplicados mas mantém aqueles em regiões diferentes
-    """
-    if len(pontos) == 0:
-        return pontos
-
-    # Ordenar por confiança (ângulo mais próximo de 60° é melhor)
-    pontos_filtrados = []
-
-    for p1 in pontos:
-        duplicado = False
-        for p2 in pontos_filtrados:
-            dist = np.linalg.norm(p1 - p2)
-            if dist < distancia_min:
-                duplicado = True
-                break
-        if not duplicado:
-            pontos_filtrados.append(p1)
-
-    return np.array(pontos_filtrados)
-
-def detectar_vales_focado(mask_pedras, gray_img):
-    """
-    Combinação focada nos métodos que funcionaram melhor
-    """
-    print("🎯 Detectando vales com métodos focados...")
-
-    todos_pontos = []
-    confiancas = []
-
-    # Método 1: Curvatura Avançada (principal)
-    # pontos_curvatura = detectar_vales_curvatura_avancado(mask_pedras, gray_img)
-    # if len(pontos_curvatura) > 0:
-    #     todos_pontos.extend(pontos_curvatura)
-    #     # Dar peso maior para este método
-    #     for _ in range(3):  # Triplicar a importância
-    #         confiancas.extend([1.0] * len(pontos_curvatura))
-    # print(f"  ✓ Curvatura Avançada: {len(pontos_curvatura)} vales")
-
-    # Método 2: Multi-escala Otimizado (complementar)
-    pontos_multiescala = detectar_vales_multi_escala_otimizado(mask_pedras, gray_img)
-    if len(pontos_multiescala) > 0:
-        todos_pontos.extend(pontos_multiescala)
-        confiancas.extend([0.8] * len(pontos_multiescala))
-    print(f"  ✓ Multi-escala Otimizado: {len(pontos_multiescala)} vales")
-
-    # Método 3: Gradiente de Intensidade (bônus)
-    # pontos_gradiente = detectar_vales_gradiente_intensidade(mask_pedras, gray_img)
-    # if len(pontos_gradiente) > 0:
-    #     todos_pontos.extend(pontos_gradiente)
-    #     confiancas.extend([0.6] * len(pontos_gradiente))
-    # print(f"  ✓ Gradiente de Intensidade: {len(pontos_gradiente)} vales")
-
-    if not todos_pontos:
-        return np.array([])
-
-    # Agrupar pontos próximos considerando confiança
-    pontos_final = agrupar_com_confianca(np.array(todos_pontos), np.array(confiancas), CONFIG_VALES['distancia_filtro'])
-    print(f"  📊 Total após agrupamento inteligente: {len(pontos_final)} vales")
-
-    return pontos_final
-
-def agrupar_com_confianca(pontos, confiancas, raio=15):
-    """
-    Agrupa pontos considerando seus pesos de confiança
-    """
-    if len(pontos) == 0:
-        return pontos
-
-    grupos = []
-    usados = set()
-
-    for i in range(len(pontos)):
-        if i in usados:
-            continue
-
-        grupo = [pontos[i]]
-        pesos = [confiancas[i]]
-        usados.add(i)
-
-        # Expandir grupo
-        for j in range(len(pontos)):
-            if j not in usados:
-                dist = np.linalg.norm(pontos[i] - pontos[j])
-                if dist < raio:
-                    grupo.append(pontos[j])
-                    pesos.append(confiancas[j])
-                    usados.add(j)
-
-        # Calcular centroide ponderado pela confiança
-        if sum(pesos) > 0:
-            centroide = np.average(grupo, weights=pesos, axis=0).astype(np.int32)
-            grupos.append(centroide)
-
-    return np.array(grupos)
+    # Criar imagem de debug
+    debug_img = img_original.copy()
+
+    # Desenhar linhas de corte
+    for p1, p2, score in pares_corte:
+        # Linha de corte em vermelho
+        cv2.line(debug_img, tuple(p1), tuple(p2), (0, 0, 255), 2)
+
+        # Pontos dos vales
+        cv2.circle(debug_img, tuple(p1), 5, (0, 255, 0), -1)
+        cv2.circle(debug_img, tuple(p2), 5, (0, 255, 0), -1)
+
+        # Score do par
+        centro = ((p1[0] + p2[0])//2, (p1[1] + p2[1])//2)
+        cv2.putText(debug_img, f"{score:.1f}", centro,
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 2)
+
+    # Contar objetos antes e depois
+    contours_antes, _ = cv2.findContours(mask_original, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    fator_area = args.zoom ** 2
+    area_min = int(CONFIG_VALES['area_min'] * fator_area)
+    area_max = int(2200 * fator_area)
+
+    for cnt in contornos:
+        area = cv2.contourArea(cnt)
+        if area_max > area > area_min:
+            cv2.drawContours(debug_img, [cnt], -1, 255, thickness=-1)
+
+    # Adicionar texto informativo
+    cv2.putText(debug_img, f"Antes: {len(contours_antes)} objetos", (10, 30),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(debug_img, f"Depois: {len(contornos)} objetos", (10, 60),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(debug_img, f"Cortes: {len(pares_corte)}", (10, 90),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    cv2.imshow(titulo, debug_img)
+    return debug_img
 
 def visualizar_vales_detalhado(img, mask_pedras, pontos_vale, titulo="Vales Detectados"):
     """
@@ -837,7 +595,7 @@ def visualizar_vales_detalhado(img, mask_pedras, pontos_vale, titulo="Vales Dete
     heatmap = np.zeros(mask_pedras.shape, dtype=np.float32)
 
     for ponto in pontos_vale:
-        cv2.circle(heatmap, tuple(ponto), CONFIG_VALES['distancia_filtro'], 1.0, -1)
+        cv2.circle(heatmap, tuple(ponto), int(CONFIG_VALES['distancia_filtro'] * args.zoom), 1.0, -1)
 
     # Normalizar heatmap
     if heatmap.max() > 0:
@@ -869,347 +627,10 @@ def visualizar_vales_detalhado(img, mask_pedras, pontos_vale, titulo="Vales Dete
     cv2.imshow(titulo, img_debug)
     return img_debug
 
-## Área de corte
-def cortar_nos_vales_inteligente(mask_pedra_solida, pontos_vale, raio_proximidade=50, min_pontos_corte=2):
-    """
-    Corta a máscara nos vales detectados usando análise de proximidade e geometria
 
-    Args:
-        mask_pedra_solida: Máscara binária das pedras
-        pontos_vale: Array de pontos (x,y) dos vales detectados
-        raio_proximidade: Distância máxima para considerar dois vales como opostos
-        min_pontos_corte: Mínimo de pontos para formar uma linha de corte
-
-    Returns:
-        Lista com contornos encontrados após cortes
-    """
-    if len(pontos_vale) < min_pontos_corte:
-        print("⚠️ Pontos insuficientes para realizar cortes")
-        return mask_pedra_solida
-
-    mask_cortada = mask_pedra_solida.copy()
-    h, w = mask_cortada.shape
-
-    # 1. Encontrar o contorno principal para análise
-    contours, _ = cv2.findContours(mask_pedra_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-    # Filtra pelo tamanho do contorno.
-    # contours_filtrados = [cnt for cnt in contours if cv2.contourArea(cnt) >= CONFIG_VALES['area_min']]
-
-    if not contours:
-        return mask_cortada
-
-    main_contour = max(contours, key=cv2.contourArea)
-
-    # 2. Agrupar pontos por proximidade e posição relativa
-    pares_corte = encontrar_pares_corte(pontos_vale, main_contour, raio_proximidade)
-
-    # print(f"🔪 Encontrados {len(pares_corte)} pares de corte")
-
-    # 3. Para cada par de vales, criar uma linha de corte
-    linhas_corte = []
-    for i, (p1, p2, score) in enumerate(pares_corte):
-        # Calcular linha de corte estendida
-        linha = calcular_linha_corte_otimizada(p1, p2, mask_pedra_solida, main_contour)
-        if linha is not None:
-            linhas_corte.append(linha)
-            # print(f"  📏 Corte {i+1}: {p1} -> {p2} (score: {score:.2f})")
-
-    # 4. Aplicar todos os cortes
-    for linha in linhas_corte:
-        # Desenhar linha de corte (valor 0 = preto)
-        cv2.line(mask_cortada, linha[0], linha[1], 0, thickness=3)
-
-        # Adicionar um pequeno círculo nos extremos para garantir o corte
-        cv2.circle(mask_cortada, linha[0], 2, 0, -1)
-        cv2.circle(mask_cortada, linha[1], 2, 0, -1)
-
-    # 5. Verificar se os cortes foram efetivos
-    contours_apos, _ = cv2.findContours(mask_cortada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    print(f"📦 Antes: {len(contours)} contorno(s) | Depois: {len(contours_apos)} contorno(s)")
-
-    # 6. Se não separou, tentar cortes mais agressivos
-    if len(contours_apos) == len(contours) and len(pontos_vale) > 0:
-        print("⚠️ Cortes não foram suficientes, aplicando cortes agressivos...")
-        mask_cortada = aplicar_cortes_agressivos(mask_cortada, pontos_vale, raio_proximidade)
-
-    # return mask_cortada, contours_apos
-    return contours_apos
-
-def encontrar_pares_corte(pontos_vale, contorno, raio_max=50):
-    """
-    Encontra pares de vales que devem ser conectados para corte
-    """
-    pares = []
-    pontos_usados = set()
-
-    # Calcular centro do contorno
-    M = cv2.moments(contorno)
-    if M['m00'] != 0:
-        cx = int(M['m10'] / M['m00'])
-        cy = int(M['m01'] / M['m00'])
-    else:
-        cx, cy = 0, 0
-
-    # Para cada ponto, encontrar o melhor par
-    for i, p1 in enumerate(pontos_vale):
-        if i in pontos_usados:
-            continue
-
-        melhor_par = None
-        melhor_score = 0
-
-        for j, p2 in enumerate(pontos_vale):
-            if i == j or j in pontos_usados:
-                continue
-
-            # Calcular distância entre os pontos
-            dist = np.linalg.norm(p1 - p2)
-
-            if dist < raio_max:
-                # Calcular score baseado em múltiplos fatores
-                score = calcular_score_par(p1, p2, contorno, (cx, cy))
-
-                # Verificar se os pontos estão em lados opostos
-                vetor_centro_p1 = p1 - np.array([cx, cy])
-                vetor_centro_p2 = p2 - np.array([cx, cy])
-
-                # Produto escalar negativo indica lados opostos
-                if np.dot(vetor_centro_p1, vetor_centro_p2) < 0:
-                    score *= 1.5  # Bônus para lados opostos
-
-                # Verificar se a linha entre eles cruza o contorno adequadamente
-                if linha_cruza_contorno_corretamente(p1, p2, contorno):
-                    score *= 1.3
-
-                if score > melhor_score:
-                    melhor_score = score
-                    melhor_par = (p1, p2, score)
-
-        if melhor_par is not None:
-            pares.append(melhor_par)
-            pontos_usados.add(i)
-            # Encontrar o índice do par escolhido
-            for j, p in enumerate(pontos_vale):
-                if np.array_equal(p, melhor_par[1]):
-                    pontos_usados.add(j)
-                    break
-
-    return pares
-
-def calcular_score_par(p1, p2, contorno, centro):
-    """
-    Calcula um score de qualidade para um par de pontos de corte
-    """
-    score = 1.0
-
-    # 1. Distância (preferir pares mais próximos)
-    dist = np.linalg.norm(p1 - p2)
-    score *= (1.0 / (1.0 + dist/100))  # Normalizar distância
-
-    # 2. Verificar se a linha passa pelo interior do contorno
-    linha = np.array([p1, p2])
-    pontos_linha = gerar_pontos_linha(p1, p2)
-
-    pontos_dentro = 0
-    for ponto in pontos_linha:
-        if cv2.pointPolygonTest(contorno, tuple(ponto.astype(float)), False) >= 0:
-            pontos_dentro += 1
-
-    proporcao_dentro = pontos_dentro / len(pontos_linha)
-    score *= (0.5 + proporcao_dentro)
-
-    # 3. Perpendicularidade com o eixo principal do contorno
-    try:
-        (x, y), (MA, ma), angle = cv2.fitEllipse(contorno)
-        eixo_principal = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle))])
-        vetor_corte = (p2 - p1) / np.linalg.norm(p2 - p1)
-
-        # Queremos cortes perpendiculares ao eixo principal
-        perpendicularidade = abs(np.dot(eixo_principal, vetor_corte))
-        score *= (1.0 + perpendicularidade)
-    except:
-        pass
-
-    return score
-
-def calcular_linha_corte_otimizada(p1, p2, mask, contorno):
-    """
-    Calcula uma linha de corte que realmente separa o contorno
-    """
-    # Vetor direção
-    direcao = p2 - p1
-    comprimento = np.linalg.norm(direcao)
-
-    if comprimento == 0:
-        return None
-
-    direcao_norm = direcao / comprimento
-
-    # Perpendicular para estender a linha
-    perp = np.array([-direcao_norm[1], direcao_norm[0]])
-
-    # Estender a linha para garantir que corte completamente
-    extensao = 20  # pixels
-
-    p1_ext = (p1 - direcao_norm * extensao).astype(np.int32)
-    p2_ext = (p2 + direcao_norm * extensao).astype(np.int32)
-
-    # Ajustar para não sair da imagem
-    h, w = mask.shape
-    p1_ext[0] = np.clip(p1_ext[0], 0, w-1)
-    p1_ext[1] = np.clip(p1_ext[1], 0, h-1)
-    p2_ext[0] = np.clip(p2_ext[0], 0, w-1)
-    p2_ext[1] = np.clip(p2_ext[1], 0, h-1)
-
-    return (tuple(p1_ext), tuple(p2_ext))
-
-def linha_cruza_contorno_corretamente(p1, p2, contorno):
-    """
-    Verifica se a linha entre p1 e p2 cruza o contorno de forma adequada
-    """
-    # Criar uma máscara temporária com a linha
-    mask_temp = np.zeros((1000, 1000), dtype=np.uint8)  # Ajustar tamanho conforme necessário
-    cv2.line(mask_temp, tuple(p1), tuple(p2), 255, 2)
-
-    # Verificar interseção com o contorno
-    intersecoes = 0
-    pontos_linha = gerar_pontos_linha(p1, p2)
-
-    for ponto in pontos_linha:
-        dist = cv2.pointPolygonTest(contorno, tuple(ponto.astype(float)), True)
-        if abs(dist) < 2:  # Próximo à borda
-            intersecoes += 1
-
-    # Esperamos pelo menos 2 interseções (entrada e saída)
-    return intersecoes >= 2
-
-def gerar_pontos_linha(p1, p2, num_pontos=20):
-    """
-    Gera pontos ao longo de uma linha entre p1 e p2
-    """
-    pontos = []
-    for t in np.linspace(0, 1, num_pontos):
-        ponto = p1 * (1-t) + p2 * t
-        pontos.append(ponto.astype(np.int32))
-    return pontos
-
-def aplicar_cortes_agressivos(mask, pontos_vale, raio=50):
-    """
-    Aplica cortes mais agressivos quando os normais não funcionam
-    """
-    mask_cortada = mask.copy()
-    h, w = mask.shape
-
-    # Agrupar pontos por proximidade espacial
-    grupos = agrupar_pontos_espaciais(pontos_vale, raio)
-
-    # Para cada grupo, criar um corte em estrela
-    for grupo in grupos:
-        if len(grupo) >= 2:
-            # Calcular centro do grupo
-            centro = np.mean(grupo, axis=0).astype(np.int32)
-
-            # Criar cortes radiais a partir do centro
-            for ponto in grupo:
-                # Estender a linha do centro até o ponto
-                direcao = ponto - centro
-                dist = np.linalg.norm(direcao)
-
-                if dist > 0:
-                    direcao_norm = direcao / dist
-                    ponto_ext = (centro + direcao_norm * (dist + 30)).astype(np.int32)
-
-                    # Desenhar linha de corte mais grossa
-                    cv2.line(mask_cortada, tuple(centro), tuple(ponto_ext), 0, thickness=5)
-
-    return mask_cortada
-
-def agrupar_pontos_espaciais(pontos, raio):
-    """
-    Agrupa pontos que estão próximos espacialmente
-    """
-    if len(pontos) == 0:
-        return []
-
-    grupos = []
-    pontos_restantes = list(range(len(pontos)))
-
-    while pontos_restantes:
-        idx_atual = pontos_restantes.pop(0)
-        grupo_atual = [pontos[idx_atual]]
-
-        # Encontrar todos os pontos próximos
-        i = 0
-        while i < len(pontos_restantes):
-            idx = pontos_restantes[i]
-            dist = np.linalg.norm(grupo_atual[0] - pontos[idx])
-
-            if dist < raio:
-                grupo_atual.append(pontos[idx])
-                pontos_restantes.pop(i)
-            else:
-                i += 1
-
-        grupos.append(np.array(grupo_atual))
-
-    return grupos
-
-# Função de visualização dos cortes
-def visualizar_cortes(img_original, mask_original, mask_cortada, contornos, pares_corte, titulo="Análise de Cortes"):
-    """
-    Visualiza os cortes aplicados na máscara
-    """
-    # Criar imagem de debug
-    debug_img = img_original.copy()
-
-    # Overlay da máscara original em azul
-    overlay_original = np.zeros_like(debug_img)
-    overlay_original[mask_original > 0] = [255, 0, 0]  # Azul
-    debug_img = cv2.addWeighted(debug_img, 0.7, overlay_original, 0.2, 0)
-
-    # Overlay da máscara cortada em verde
-    overlay_cortada = np.zeros_like(debug_img)
-    overlay_cortada[mask_cortada > 0] = [0, 255, 0]  # Verde
-    debug_img = cv2.addWeighted(debug_img, 1.0, overlay_cortada, 0.2, 0)
-
-    # Desenhar linhas de corte
-    for p1, p2, score in pares_corte:
-        # Linha de corte em vermelho
-        cv2.line(debug_img, tuple(p1), tuple(p2), (0, 0, 255), 2)
-
-        # Pontos dos vales
-        cv2.circle(debug_img, tuple(p1), 5, (255, 255, 0), -1)
-        cv2.circle(debug_img, tuple(p2), 5, (255, 255, 0), -1)
-
-        # Score do par
-        centro = ((p1[0] + p2[0])//2, (p1[1] + p2[1])//2)
-        cv2.putText(debug_img, f"{score:.1f}", centro,
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 2)
-
-    # Contar objetos antes e depois
-    contours_antes, _ = cv2.findContours(mask_original, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    for cnt in contornos:
-        area = cv2.contourArea(cnt)
-        if 4500 > area > 800:
-            cv2.drawContours(debug_img, [cnt], -1, 255, thickness=-1)
-
-    # Adicionar texto informativo
-    cv2.putText(debug_img, f"Antes: {len(contours_antes)} objetos", (10, 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(debug_img, f"Depois: {len(contornos)} objetos", (10, 60),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(debug_img, f"Cortes: {len(pares_corte)}", (10, 90),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-    cv2.imshow(titulo, debug_img)
-    return debug_img
-
-
-
-# O resto do seu código continua igual...
-# TESTE
 # pipeline_blackhat("imagem_recortada.jpeg")
 # pipeline_blackhat("imagem.jpeg")
-pipeline_blackhat(args.imagem)
+if __name__ == "__main__":
+    args = parse_arguments()
+    pipeline_blackhat(args)
+
