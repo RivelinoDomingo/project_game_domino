@@ -240,8 +240,10 @@ def pipeline_blackhat(args):
     for d in pedras_aprovadas:
 
         # Enviamos a imagem original limpa (img) e o retângulo da pedra
-        pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
+        pts_cima, pts_baixo, zero = extrair_e_contar(img, d['rect_pedra'])
         texto = f"{pts_cima}|{pts_baixo}"
+        if texto == "0|0" and not zero:
+            continue
         # box_traco = np.int32(cv2.boxPoints(d['rect_traco']))
         # cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 2)
 
@@ -298,6 +300,8 @@ def extrair_e_contar(img, rect_pedra):
         # Se estiver deitada, nós rotacionamos os pontos em 90 graus
         pts = np.array([pts[1], pts[2], pts[3], pts[0]], dtype="float32")
 
+
+
     # Criamos o "molde" perfeito de 40x80 pixels
     dst = np.array([
         [0, 0],
@@ -328,6 +332,12 @@ def extrair_e_contar(img, rect_pedra):
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
         contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        maior_cnt = int(cv2.contourArea(max(contornos, key=cv2.contourArea)))
+        zero = False
+
+        if maior_cnt >= 15 * args.zoom:
+            zero = True
         pontos = 0
 
         point_area = CONFIG_VALES['area_ponto'] * args.zoom
@@ -349,16 +359,19 @@ def extrair_e_contar(img, rect_pedra):
             # else:
                 # print(f"Area fora do range: {area}")
         # BLINDAGEM 3: Trava matemática máxima de um dominó
-        return min(pontos, 6)
+        return min(pontos, 6), zero
 
-    pts_cima = contar_bolinhas(metade_cima)
-    pts_baixo = contar_bolinhas(metade_baixo)
+    zero = False
+    pts_cima, zero_1 = contar_bolinhas(metade_cima)
+    pts_baixo, zero_2 = contar_bolinhas(metade_baixo)
 
+    if zero_1 or zero_2:
+        zero = True
     # Opcional: mostrar as pedras extraídas para você ver a mágica acontecendo (comente depois)
     # cv2.imshow("Pedra Extraida", warped)
     # cv2.waitKey(0)
 
-    return pts_cima, pts_baixo
+    return pts_cima, pts_baixo, zero
 
 # ====================================================================
 # SUBSISTEMA DE LOCALIZAÇÂO DE VALES

@@ -10,19 +10,17 @@ from collections import deque
 app = Flask(__name__)
 
 # Configurações otimizadas
-# device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
+device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
 # device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
-device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
-zoom_factor = 1.0
+# device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
+zoom_factor = 1.3
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
 INTERVALO_SEGUNDOS = 2.0
 executando_servidor = True
-enviar_video = False
+enviar_video = True
 DISTANCIA_MINIMA = 37
-TEMPO_MEMORIA = 4.0
-cache_pedras = []
 modo_leitura = 'mesa'
 actions = {'action': 'none', 'action1': 'none', 'action2': 'none'}
 resetMaoPlayers = False
@@ -36,11 +34,27 @@ zoom_reset = False
 zoom_change = False
 modoAuto = False
 
+debug_mode = False
+
 # Cache para frames para evitar processamento repetido
 frame_buffer = deque(maxlen=2)
 ultimo_frame_valido = None
 falhas_consecutivas = 0
 MAX_FALHAS = 10
+conf_busca = False
+cord_cont = (0, 0)
+area_base = 0
+
+CONFIG_VALES = {
+    'distancia_filtro': 15,
+    'distancia_mov': 15,
+    'distancia_corte': 62,
+    'tamanho_kernel_morfologia': 25, # Novo parâmetro para o tamanho da fenda a ser fechada
+    'area_max': 2200,                # Area maxima das pedras
+    'area_min': 800,
+    'area_ponto': 40,
+    'distancia_conexao': 120,
+}
 
 
 def ordenar_pontos(pts):
@@ -61,76 +75,67 @@ def ordenar_pontos(pts):
     return rect
 
 def extrair_e_contar(img, rect_pedra):
-    # Pega as 4 quinas da caixa verde
     box = cv2.boxPoints(rect_pedra)
     pts = ordenar_pontos(box)
 
-    # Forçar a imagem a ficar sempre "em pé" (altura maior que largura)
-    dist_0_1 = np.linalg.norm(pts[0] - pts[1]) # Largura superior
-    dist_0_3 = np.linalg.norm(pts[0] - pts[3]) # Altura esquerda
+    dist_0_1 = np.linalg.norm(pts[0] - pts[1])
+    dist_0_3 = np.linalg.norm(pts[0] - pts[3])
 
     if dist_0_1 > dist_0_3:
-        # Se estiver deitada, nós rotacionamos os pontos em 90 graus
         pts = np.array([pts[1], pts[2], pts[3], pts[0]], dtype="float32")
 
-    # Criamos o "molde" perfeito de 40x80 pixels
-    dst = np.array([
-        [0, 0],
-        [39, 0],
-        [39, 79],
-        [0, 79]
-    ], dtype="float32")
-
-    # Mágica: Estica a pedra inclinada da foto para caber no nosso molde perfeito
+    dst = np.array([[0, 0], [39, 0], [39, 79], [0, 79]], dtype="float32")
     M = cv2.getPerspectiveTransform(pts, dst)
     warped = cv2.warpPerspective(img, M, (40, 80))
 
-    # Guilhotina: Corta o molde ao meio
     metade_cima = warped[0:40, 0:40]
     metade_baixo = warped[40:80, 0:40]
 
+    # Calcula o fator de área UMA VEZ
+    fator_area = zoom_factor ** 2
+
     def contar_bolinhas(metade):
-            gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
+        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 
-            thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        h, w = thresh.shape
+        cv2.rectangle(thresh, (0, 0), (w, h), 0, 3)
 
-            # BLINDAGEM 1: Apagar as bordas da imagem (3 pixels)
-            # Isso impede que a sombra da beirada do dominó seja contada como bolinha
-            h, w = thresh.shape
-            cv2.rectangle(thresh, (0, 0), (w, h), 0, 3)
+        kernel = np.ones((2, 2), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
-            kernel = np.ones((2,2), np.uint8)
-            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            pontos = 0
+        zero_local = False
+        if contornos:
+            maior_cnt = cv2.contourArea(max(contornos, key=cv2.contourArea))
+            # CORREÇÃO: Usando o zoom ao quadrado
+            if maior_cnt >= 10 * fator_area:
+                zero_local = True
 
-            for c in contornos:
-                area = cv2.contourArea(c)
+        pontos = 0
+        # CORREÇÃO: Usando o zoom ao quadrado
+        point_area = CONFIG_VALES['area_ponto'] * fator_area
 
-                # A sua área super calibrada pelo GIMP! (Dei uma margem de segurança 25 a 85)
-                if 32 < area < 85:
-                    # BLINDAGEM 2: O filtro de formato (Circularidade)
-                    perimetro = cv2.arcLength(c, True)
-                    if perimetro == 0: continue
+        for c in contornos:
+            area = cv2.contourArea(c)
+            if point_area * 0.5 < area < point_area * 1.3:
+                perimetro = cv2.arcLength(c, True)
+                if perimetro == 0: continue
 
-                    circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+                circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+                if circularidade > 0.6:
+                    pontos += 1
 
-                    # Se for redondo o suficiente (Círculo = 1.0, Quadrado ~0.78)
-                    if circularidade > 0.2:
-                        pontos += 1
+        return min(pontos, 6), zero_local
 
-            # BLINDAGEM 3: Trava matemática máxima de um dominó
-            return min(pontos, 6)
+    pts_cima, zero_1 = contar_bolinhas(metade_cima)
+    pts_baixo, zero_2 = contar_bolinhas(metade_baixo)
 
-    pts_cima = contar_bolinhas(metade_cima)
-    pts_baixo = contar_bolinhas(metade_baixo)
+    # Se qualquer uma das metades ativou a flag de ruído massivo, validamos a peça
+    zero_total = zero_1 or zero_2
 
-    # Opcional: mostrar as pedras extraídas para você ver a mágica acontecendo (comente depois)
-    # cv2.imshow("Pedra Extraida", warped)
-    # cv2.waitKey(0)
-
-    return pts_cima, pts_baixo
+    return pts_cima, pts_baixo, zero_total
 
 def valor_ja_existe(valor_procurado, modo_atual, pedras_ja_vistas_neste_frame):
     global maos_jogadores
@@ -215,11 +220,14 @@ def inicializar_camera():
     """Inicializa a câmera com tentativas e timeout"""
     global camera
     try:
-        camera = cv2.VideoCapture(device,cv2.CAP_FFMPEG)
+        # camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
+        camera = cv2.VideoCapture(device)
         if not camera.isOpened():
             print("⚠️ Falha ao abrir câmera, tentando novamente...")
             time.sleep(1)
-            camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
+            # camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
+            camera = cv2.VideoCapture(device)
+
 
         # Configurações para reduzir buffer e latência
         camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -227,6 +235,43 @@ def inicializar_camera():
     except Exception as e:
         print(f"❌ Erro ao inicializar câmera: {e}")
         return False
+
+def nova_pedra(mask_filtrada, area_max_2, cord):
+    # print("entrou na função nova_pedra")
+
+    contours_1, _ = cv2.findContours(mask_filtrada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # PROTEÇÃO: Se não achou nenhum contorno na tela, aborta a função sem quebrar
+    if not contours_1:
+        return False, 0, (0, 0)
+
+    # CORREÇÃO: Pega o maior contorno baseado na Área, não no array
+    maior_cnt = max(contours_1, key=cv2.contourArea)
+    area_max_1 = cv2.contourArea(maior_cnt)
+
+    # CORREÇÃO: Limite de área já com zoom fatorado (conforme discutimos na outra interação)
+    fator_area = zoom_factor ** 2
+    area_test = CONFIG_VALES['area_min'] * fator_area
+
+    # minAreaRect retorna (centro(x,y), tamanho(w,h), angulo)
+    new_cord, _, _ = cv2.minAreaRect(maior_cnt)
+
+    mov_limite = CONFIG_VALES['distancia_mov'] * zoom_factor
+
+    if not area_max_1 or not area_max_2:
+        return False, 0, (0, 0) # CORREÇÃO: removido o tuple(0, 0)
+
+    # Checa alteração brusca de área (Pedra entrou ou saiu da mesa)
+    if area_max_1 > (area_max_2 + area_test) or area_max_1 < (area_max_2 - area_test):
+        return True, area_max_1, new_cord
+
+    # CORREÇÃO: Checa movimentação real usando distância euclidiana (absoluta em todas as direções)
+    distancia_percorrida = math.hypot(new_cord[0] - cord[0], new_cord[1] - cord[1])
+
+    if distancia_percorrida > mov_limite:
+        return True, area_max_1, new_cord
+
+    return False, area_max_1, new_cord
 
 # Inicializa câmera
 camera = None
@@ -349,90 +394,10 @@ def loop_da_camera():
             time.sleep(0.5)
 
 
-sentido = 'caindo' # Vai ditar o sentido de incremento da função autozoom.
-zoom_up = 0.0
-zoom_down = 0.0
-first_zoom = True
-
-def automatic_zoom(contornos, tam_traco=26, atual_zoom=1.0):
-    global processar_grupos, zoom_factor, sentido
-    global first_zoom, zoom_up, zoom_down
-    metricas = []
-
-    # 1. Filtro Blindado (Isto continua perfeito)
-    for cnt in contornos:
-        area = cv2.contourArea(cnt)
-        if area < 10 or area > 500: continue
-
-        rect = cv2.minAreaRect(cnt)
-        (cx, cy), (w_box, h_box), angle = rect
-        if w_box == 0 or h_box == 0: continue
-
-        linha_comprimento = max(w_box, h_box)
-        linha_espessura = min(w_box, h_box)
-        ratio = linha_comprimento / linha_espessura
-
-        if 15.0 > ratio > 5.0:
-            metricas.append(linha_comprimento)
-
-    # Inicializa as variáveis de scanner se for a primeira vez
-    if first_zoom:
-        zoom_up = atual_zoom
-        zoom_down = atual_zoom
-        first_zoom = False
-
-    # 2. Processa as médias
-    mediaFinal = 0
-    medias = processar_grupos(metricas)
-    for i in medias:
-        if i >= 7:
-            mediaFinal = i
-
-    # ================================================================
-    # CÁLCULO DIRETO (A Matemática Exata)
-    # ================================================================
-    if mediaFinal > 0.0:
-        # Achamos o traço! Seja por sorte inicial ou pelo Scanner Cego!
-        fator_correcao = tam_traco / mediaFinal
-        zoom_result = zoom_factor * fator_correcao
-
-        # Reseta o scanner para a próxima vez que o botão for apertado
-        first_zoom = True
-        sentido = 'caindo'
-
-        print(f"🎯 Auto-Calibragem Concluída!")
-        print(f"Traço atual: {mediaFinal:.1f} -> Alvo: {tam_traco}")
-        print(f"Novo Zoom ajustado para: {zoom_result:.2f}x")
-
-        # Retorna TRUE (sucesso) e o zoom perfeito calculado
-        return True, zoom_result
-
-    # ================================================================
-    # O SCANNER CEGO (A Busca Grossa)
-    # ================================================================
-    else:
-        # A câmera não viu traços! Começa a oscilar o zoom.
-        if sentido == 'caindo':
-            zoom_down = zoom_down - 0.02
-            if zoom_down < 0.2:
-                sentido = 'subindo'
-                print(f"Lente bateu no limite mínimo (0.2). Invertendo busca...")
-            return False, max(zoom_down, 0.2)
-
-        elif sentido == 'subindo':
-            zoom_up = zoom_up + 0.02
-            if zoom_up > 2.0:
-                sentido = 'caindo'
-                # Reseta tudo para não entrar em loop infinito
-                zoom_down = 1.0
-                zoom_up = 1.0
-                print(f"Lente bateu no limite máximo (2.0). Recomeçando varredura...")
-            return False, min(zoom_up, 2.0)
-
 def processar_frame(img, tempo_atual):
     """Processa o frame de forma otimizada"""
     global ultima_leitura_pedras, ultimo_frame_processado, duplicada
-    global cache_pedras, resetMaoPlayers, maos_jogadores
+    global resetMaoPlayers, maos_jogadores
     global modo_leitura, tirar_foto_debug, enviar_video, zoom_factor
 
     # Rotaciona a imagem para ficar mais adequando à mesa
@@ -478,95 +443,147 @@ def processar_frame(img, tempo_atual):
 
     # Processamento de visão computacional
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # ====================================================================
-    # 1. ENCONTRAR A SILHUETA SÓLIDA DAS PEDRAS
-    # ====================================================================
-    # Pega as partes muito claras (plástico do dominó)
-    _, mask_branca = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-
-    # O SEGREDO 1: Fechar os "buracos" pretos dos traços e bolinhas!
-    # Usamos um kernel bem grande (ex: 25x25) para a mancha branca engolir o traço
-    kernel_silhueta = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-    mask_pedra_solida = cv2.morphologyEx(mask_branca, cv2.MORPH_CLOSE, kernel_silhueta)
-
-      # --- A MÁGICA DA MARGEM DE SEGURANÇA ---
-    # Encolhe a máscara sólida de 5 a 7 pixels para DENTRO.
-    # Isso solta a borda da sombra, mas preserva o meio onde fica o traço!
-    kernel_encolhimento = np.ones((6, 6), np.uint8)
-    mask_pedra_solida = cv2.erode(mask_pedra_solida, kernel_encolhimento, iterations=1)
 
     # ====================================================================
-    # 2. ENCONTRAR OS DETALHES ESCUROS (Blackhat)
+    # 1. ENCONTRAR A SILHUETA SÓLIDA BASE
     # ====================================================================
-    # Aumentei o kernel do Blackhat de (8,8) para (12,12) para pegar traços mais grossos
-    kernel_bh = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 12))
-    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel_bh)
+     # 1. Máscara Sólida Base
+    _, mask_branca = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
+    contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # cv2.imshow("1 - Mask Branca", mask_branca)
 
-    # Baixei o threshold para 80, assim ele não exige que o traço seja "tão" preto
-    _, mask_tracos = cv2.threshold(blackhat, 80, 255, cv2.THRESH_BINARY)
+    mask_solida = np.zeros_like(gray)
+    cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
 
-    # ====================================================================
-    # 3. O CRUZAMENTO (O Filtro Perfeito)
-    # ====================================================================
-    # Agora sim: Mantém os traços que estão DENTRO da silhueta sólida da pedra!
-    # Isso ignora totalmente as sombras na toalha de mesa ou nas mãos dos jogadores.
-    mask_tracos_filtrada = cv2.bitwise_and(mask_tracos, mask_pedra_solida)
+    # cv2.imshow("1 - Mask Solida", mask_solida)
+    mask_solida = cv2.medianBlur(mask_solida, 5)
+    # cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
 
-    # Continua com a solda para juntar os pedacinhos do traço que possam estar falhados
-    kernel_close = np.ones((2,2), np.uint8)
-    mask_soldada = cv2.morphologyEx(mask_tracos_filtrada, cv2.MORPH_CLOSE, kernel_close)
+    global conf_busca, area_base, cord_cont, detectar_vales_por_morfologia
+    global encontrar_pares_corte, cortar_nos_vales_inteligente
 
-    contours, _ = cv2.findContours(mask_soldada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # print(f"Valor de Coordenadas do contorno: {cord_cont}")
 
-    global actions, zoom_change, automatic_zoom, zoom_prev
-
-
-    tamanho = 24    # Tamanho de traço desejado
-    if modoAuto:
-        CP_INTERVALO_SEGUNDOS = INTERVALO_SEGUNDOS
-        INTERVALO_SEGUNDOS = 0.1
-        zoom_sucess, zoom_factor = automatic_zoom(contours, tamanho, zoom_factor)
-        if zoom_sucess:
-            # Desliga o modo auto para o jogo normal continuar com o zoom perfeito!
-            actions['action1'] = None
-            zoom_change = True
-            modoAuto = False
-            INTERVALO_SEGUNDOS = CP_INTERVALO_SEGUNDOS
+    processar = False
+    if not conf_busca:
+        processar, area_base, cord_cont = nova_pedra(mask_solida, CONFIG_VALES['area_min'], cord_cont)
+        conf_busca = True
     else:
-        # Processa contornos (restante do código similar ao original, mas otimizado)
+        processar, area_base, cord_cont = nova_pedra(mask_solida, area_base, cord_cont)
+    # print(f"Valor de Coordenadas do contorno de averiguação: {cord_cont}")
+    processar = True
+    if processar:
+        # Refinamento de Contornos
+        cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        mask_filtrada = np.zeros_like(gray)
+
+        # Melhoria
+        fator_area = zoom_factor ** 2
+        area_min = int(CONFIG_VALES['area_min'] * fator_area)
+        area_max = int(CONFIG_VALES['area_max'] * fator_area)
+        raio_corte = int(CONFIG_VALES['distancia_corte'] * zoom_factor) # Distância é linear
+
+        for c in cnts_pre:
+            if cv2.contourArea(c) > area_min:
+                cv2.drawContours(mask_filtrada, [c], -1, 255, -1)
+
+        pontos_vale = detectar_vales_por_morfologia(mask_filtrada)
+
+        kernel_derreter = np.ones((7, 7), np.uint8)
+        mask_corte = cv2.erode(mask_filtrada, kernel_derreter, iterations=3)
+
+
+        contours_final, _ = cv2.findContours(mask_filtrada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        cnt_finais = []
+        if len(pontos_vale) >= 2 and contours_final:
+            # if args.debug:
+            #     img_debug_final = visualizar_vales_detalhado(img, mask_filtrada, pontos_vale)
+
+            # if args.debug:
+            #     cv2.imshow("2 - Mask Usada", mask_filtrada)
+
+            pares_corte = encontrar_pares_corte(pontos_vale, mask_filtrada, raio_corte)
+            cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, pares_corte)
+            max_contorno = max(cnt_finais, key=cv2.contourArea)
+            min_contorno = min(cnt_finais, key=cv2.contourArea)
+            max_contorno = cv2.contourArea(max_contorno)
+            min_contorno = cv2.contourArea(min_contorno)
+            # print(f"Maior contorno: {max_contorno}  -- Menor: {min_contorno}")
+
+            if max_contorno > area_max * 1.8:
+                # print("Recalculando com mascara reduzinda!")
+                # print(f"Área max. permitida: {area_max * 1.8}  --  Área min: {area_min}")
+                # print(f"Área do maior Contorno: {max_contorno}  --  Menor contorno: {min_contorno}")
+                # contours_corte, _ = cv2.findContours(mask_corte, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # mask_corte = np.zeros_like(gray)
+                # contorno_corte = max(contours_corte, key=cv2.contourArea)
+                # cv2.drawContours(mask_corte, [contorno_corte], -1, 255, -1)
+
+                pares_corte = encontrar_pares_corte(pontos_vale, mask_corte, raio_corte)
+                cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, pares_corte)
+                # if args.debug:
+                #     cv2.imshow("2 - Mask Corte Usada", mask_corte)
+
+            # if args.debug:
+            #     visualizar_cortes(img_debug_final, mask_filtrada, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
+
+        else:
+            if contours_final:
+                cnt_finais = contours_final
+            # print("⚠️ Poucos vales detectados ou nenhum contorno encontrado!")
+
+        global actions, zoom_change, automatic_zoom, zoom_prev
+
         candidatos = []
 
-        for cnt in contours:
+        if debug_mode:
+            print(f"Contornos encontrados: {len(cnt_finais)}")
+
+        for cnt in cnt_finais:
             area = cv2.contourArea(cnt)
-            if area < 10 or area > 200:
-                continue
+            # if area < 10 or area > 2200:
+            #     continue
+            if area_max > area > area_min:
+                rect = cv2.minAreaRect(cnt)
+                center, size, angle = rect
+                w_box, h_box = size
 
-            rect = cv2.minAreaRect(cnt)
-            (cx, cy), (w_box, h_box), angle = rect
+                if w_box == 0 or h_box == 0:
+                    # print("Box com dimensões zeradas")
+                    continue
 
-            if w_box == 0 or h_box == 0:
-                continue
+                width, height = size
 
-            linha_comprimento = max(w_box, h_box)
-            linha_espessura = min(w_box, h_box)
-            ratio = linha_comprimento / linha_espessura
+                if width > height:
+                    ratio = width/height
+                    margem_A = 0.95
+                    margem_L = 1.1
 
-            if ratio > 6.0 and tamanho - 3 <= linha_comprimento <= tamanho + 3 and 1 <= linha_espessura <= 5:
-                if w_box > h_box:
-                    rect_pedra = ((cx, cy), (30, 61), angle)
                 else:
-                    rect_pedra = ((cx, cy), (61, 30), angle)
+                    ratio = height/width
+                    margem_A = 1.1
+                    margem_L = 0.95
 
-                # Verifica brilho
-                mask_box = np.zeros(gray.shape, dtype=np.uint8)
-                box_pedra_pts = np.int32(cv2.boxPoints(rect_pedra))
-                cv2.fillPoly(mask_box, [box_pedra_pts], 255)
+                if not (2.5 > ratio > 1.4):
+                    # print(f"Ratio fora do padrão: {ratio}")
+                    continue
+
+                # print(f"Valor de ratio: {ratio}")
+
+
+
+
+                rect_pedra = (center, (width*margem_L, height*margem_A), angle)
+
                 candidatos.append({
                     'rect_pedra': rect_pedra,
-                    'rect_traco': rect,
-                    'centro': (cx, cy)
+                    'centro': center
                 })
+        if debug_mode:
+            print(f"Candidatos aprovados: {len(candidatos)}")
 
+        # Filtro por distância
         pedras_unicas = []
 
         for cand in candidatos:
@@ -584,7 +601,7 @@ def processar_frame(img, tempo_atual):
 
 
         # Configuração de bando
-        DISTANCIA_CONEXAO = 70  # Tamanho da "Área de influência" de cada pedra
+        DISTANCIA_CONEXAO = CONFIG_VALES['distancia_conexao'] * zoom_factor
         agrupamento = True
         pedras_aprovadas = []
 
@@ -641,160 +658,287 @@ def processar_frame(img, tempo_atual):
         pedras_aprovadas.sort(key=lambda x: x['centro'][1])
 
         # =================================================================
-        # --- MEMÓRIA INDIVIDUAL (O MAPA DA MESA) ---
+        # --- LEITURA DIRETA E PREPARAÇÃO PARA A WEB ---
         # =================================================================
+        # Protegido por "if processar", este bloco só roda quando a mesa muda.
+        # Dispensamos a lógica de fantasmas e o cache individual.
 
         lista_final = []
-
-        DISTANCIA_TOLERANCIA = 5 # Se a pedra está no mesmo lugar (margem de 5px), é a mesma.
-
         pedras_vistas_agora = []
-        valor_pedra = None
-        duplicada = None
 
-        for d in pedras_aprovadas:
-            # Tratando de forma direta quando no modo de seleção da mão do jogador
-            if modo_leitura != 'mesa':
-                # Pega a contagem real
-                pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
-                # Adiciona na lista que vai para a Web
-                valor_pedra = f"{pts_cima}|{pts_baixo}"
-                cx_nova, cy_nova = d['centro']
-            else:
-                cx_nova, cy_nova = d['centro']
-                pedra_reconhecida_memoria = None
-                menor_distancia = float('inf')
+        for d in pedras_aprovadas[:]:
+            cx_nova, cy_nova = d['centro']
 
-                # 1. Procura qual pedra da memória está mais perto desta caixa atual
-                for p_mem in cache_pedras:
-                    cx_mem, cy_mem = p_mem['centro']
-                    dist = math.hypot(cx_mem - cx_nova, cy_mem - cy_nova)
+            # Lemos os valores reais direto da imagem cortada sem depender de cache
+            pts_cima, pts_baixo, zero = extrair_e_contar(img, d['rect_pedra'])
+            valor_pedra = f"{pts_cima}|{pts_baixo}"
 
-                    if dist < menor_distancia:
-                        menor_distancia = dist
-                        if dist < DISTANCIA_TOLERANCIA:
-                            pedra_reconhecida_memoria = p_mem
+            if valor_pedra == "0|0" and not zero:
+                pedras_aprovadas.remove(d)
+                continue
 
-                # 2. Decide se aproveita a memória ou se gasta CPU para recalcular
-                if pedra_reconhecida_memoria:
-                    # ACHOU NO MAPA: É a mesma pedra de antes! Copia o valor.
-                    valor_pedra = pedra_reconhecida_memoria['valor']
-                else:
-                    # LUGAR NOVO: Pedra recém-colocada (ou a mesa foi arrastada). Recalcula!
-                    pts_cima, pts_baixo = extrair_e_contar(img, d['rect_pedra'])
-                    valor_pedra = f"{pts_cima}|{pts_baixo}"
-            # 3. Adiciona na lista de hoje (atualizando a coordenada exata para não haver "drift")
+            # Bloqueio de leitura dupla no mesmo frame (ou nas mãos dos jogadores)
             if not valor_ja_existe(valor_pedra, modo_leitura, pedras_vistas_agora):
-                pedras_vistas_agora.append({
-                    'centro': (cx_nova, cy_nova),
-                    'rect_pedra': d['rect_pedra'],
-                    'rect_traco': d['rect_traco'],
+                pedras_vistas_agora.append({'valor': valor_pedra})
+
+                # --- INTELIGÊNCIA DE ORIENTAÇÃO (CSS) ---
+                w, h = d['rect_pedra'][1]
+                angulo_cv = d['rect_pedra'][2]
+
+                # O CSS desenha as pedras "em pé" por padrão (0 graus).
+                if w < h:
+                    angulo_corrigido = angulo_cv - 90
+                else:
+                    angulo_corrigido = angulo_cv
+
+                lista_final.append({
                     'valor': valor_pedra,
-                    'ultima_vez_vista': tempo_atual
+                    'x': cx_nova,
+                    'y': cy_nova,
+                    'angulo': angulo_corrigido
                 })
             else:
-                # Imprime apenas se NÃO for a mesa para evitar poluir o log
+                # Imprime rejeições apenas nas mãos para não poluir o terminal da mesa
                 if modo_leitura != 'mesa':
-                    print(f"🚫 Duplicata rejeitada: {valor_pedra} (já pertence a outro ou lida duas vezes)")
-                    duplicada = valor_pedra
+                    print(f"🚫 Duplicata rejeitada: {valor_pedra}")
                     continue
-
-        # print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
-
-        ## Bloco de debug de dados das pedras
-        # global ler_info
-        # if ler_info and modo_leitura != 'mesa':
-        #     print(pedras_vistas_agora)
-        #     ler_info = False
-
-        # 4. RECUPERAÇÃO DE FANTASMAS (Mão na frente da câmera)
-        # Se uma pedra antiga não foi vista agora, mas tem tempo de vida, nós a mantemos viva
-        if modo_leitura == 'mesa':
-            for p_mem in cache_pedras:
-                espaco_ocupado = False
-                pedra_movimentada = False
-
-                # Prepara o valor invertido para não ser enganado pela rotação (ex: 6|5 e 5|6)
-                valor_mem = p_mem['valor']
-                partes = valor_mem.split('|')
-                valor_invertido = f"{partes[1]}|{partes[0]}"
-
-                for p_agora in pedras_vistas_agora:
-                    # Regra 1: Alguém tomou o lugar físico desta pedra?
-                    dist = math.hypot(p_mem['centro'][0] - p_agora['centro'][0], p_mem['centro'][1] - p_agora['centro'][1])
-                    if dist < DISTANCIA_TOLERANCIA:
-                        espaco_ocupado = True
-
-                    # Regra 2: Esta mesma pedra foi arrastada para OUTRO lugar da mesa?
-                    if p_agora['valor'] == valor_mem or p_agora['valor'] == valor_invertido:
-                        pedra_movimentada = True
-
-                # Só restauramos o fantasma se o espaço estiver vazio, se ela não tiver
-                # fugido para outro lugar, e se a memória ainda for recente.
-                if not espaco_ocupado and not pedra_movimentada and (tempo_atual - p_mem['ultima_vez_vista']) <= TEMPO_MEMORIA:
-                    pedras_vistas_agora.append(p_mem)
-
-        # Atualiza o mapa oficial
-        cache_pedras = pedras_vistas_agora
-
-        for p in cache_pedras:
-            cx, cy = p['rect_pedra'][0]
-
-            # Desempacotamos a Largura (w) e a Altura (h)
-            w, h = p['rect_pedra'][1]
-
-            angulo_cv = p['rect_pedra'][2]
-
-            # --- A INTELIGÊNCIA DE ORIENTAÇÃO ---
-            # O CSS desenha as pedras "em pé" por padrão (0 graus).
-            if w < h:
-                # Pedra EM PÉ. O OpenCV deu ~90 graus.
-                # Subtraímos 90 para o CSS entender que é 0 graus (Vertical)
-                angulo_corrigido = angulo_cv - 90
-            else:
-                # Pedra DEITADA (ex: o 6|6). A largura é maior que a altura.
-                # O OpenCV também deu ~90 graus, mas nós MANTEMOS os 90
-                # para o CSS girar a pedra e deitá-la na tela!
-                angulo_corrigido = angulo_cv
-
-            lista_final.append({
-                'valor': p['valor'],
-                'x': cx,
-                'y': cy,
-                'angulo': angulo_corrigido
-            })
-
-        ultima_leitura_pedras = lista_final
 
         # ONDE ESTAMOS A OLHAR?
         if modo_leitura == 'mesa':
             ultima_leitura_pedras = lista_final
         else:
-            # Se estivermos a escanear um jogador, salvamos as pedras na mão dele!
-            # Só atualizamos se a leitura estiver estável (para evitar salvar ruído de movimento)
+            # Na leitura da mão, só validamos se houverem exatamente 7 pedras
             if len(lista_final) == 7:
                 maos_jogadores[modo_leitura] = lista_final
                 print(f"✅ Mão de {modo_leitura} atualizada com {len(lista_final)} pedras")
 
-        # Prepara frame para streaming
+        # =================================================================
+        # --- PREPARA FRAME PARA STREAMING (WEBCAM/VIDEO) ---
+        # =================================================================
         if enviar_video:
             out = img.copy()
-            for p in cache_pedras[:20]:  # Limita desenho
+
+            # Usamos a lista_final (que já tem o ângulo e o valor corrigidos para a Web)
+            # ou a pedras_aprovadas (que tem as caixas retangulares cruas do OpenCV).
+            # Como você quer desenhar o rect_pedra, vamos usar o pedras_aprovadas original daquele frame.
+
+            for p in pedras_aprovadas:  # Limita desenho a 20 pedras por performance
                 try:
-                    box_traco = np.int32(cv2.boxPoints(p['rect_traco']))
-                    cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 1)
+                    # # Desenha o traço central (fenda) em azul
+                    # box_traco = np.int32(cv2.boxPoints(p['rect_traco']))
+                    # cv2.drawContours(out, [box_traco], 0, (255, 0, 0), 1)
+
+                    # Desenha a caixa principal da pedra em verde
                     box_pedra = np.int32(cv2.boxPoints(p['rect_pedra']))
                     cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 1)
-                except:
+
+                    # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
+                    cx, cy = map(int, p['centro'])
+                    # Como tiramos o valor de pedras_aprovadas, precisamos pegar da leitura.
+                    # Se você preferir não ler o valor aqui para poupar CPU, basta remover as linhas abaixo.
+                    pts_cima, pts_baixo, zero = extrair_e_contar(img, p['rect_pedra'])
+                    if not zero and f"{pts_cima}|{pts_baixo}" == "0|0":
+                        continue
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+                except Exception as e:
+                    # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
+                    # print(f"Erro ao desenhar contorno no stream: {e}")
                     pass
 
+            # Codifica a imagem para JPEG com compressão de 70% (bom equilíbrio tamanho/qualidade)
             sucesso_encode, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if sucesso_encode:
                 ultimo_frame_processado = buffer.tobytes()
         else:
             ultimo_frame_processado = None
 
-        # print(f"Pedras processadas: {len(lista_final)}")
+# ====================================================================
+# SUBSISTEMA DE LOCALIZAÇÂO DE VALES
+# ====================================================================
+
+def detectar_vales_por_morfologia(mask_solida):
+    """
+    Aplica a ideia de preencher as fendas e subtrair a imagem original
+    para isolar os vales.
+    """
+    # 1. 'Massa Corrida' (Fechamento)
+    k_size = CONFIG_VALES['tamanho_kernel_morfologia']
+    kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+
+    mask_fechada = cv2.morphologyEx(mask_solida, cv2.MORPH_CLOSE, kernel_fechamento)
+
+    # 2. Subtração (O Pulo do Gato)
+    mask_vales = cv2.subtract(mask_fechada, mask_solida)
+    # if args.debug:
+    #     cv2.imshow("3 - Mask Vales", mask_vales) # Descomente se precisar debugar
+
+    # 3. Extrair os Pontos
+    cnts_vales, _ = cv2.findContours(mask_vales, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    pontos_encontrados = []
+    for c in cnts_vales:
+        cx, cy = cv2.minAreaRect(c)[0]
+        area = cv2.contourArea(c)
+        # Correção: passar como uma tupla contendo a coordenada e a área
+        pontos_encontrados.append(([cx, cy], area))
+
+    return agrupar_pontos_proximos(pontos_encontrados, int(CONFIG_VALES['distancia_filtro'] * zoom_factor))
+
+def agrupar_pontos_proximos(dados_pontos, raio=5):
+    """
+    Recebe uma lista no formato [ ([cx, cy], area), ... ]
+    Ordena por área para garantir a sobrevivência do ponto mais forte
+    sem perder a performance do NumPy.
+    """
+    if len(dados_pontos) == 0:
+        return np.array([])
+
+    # 1. O Pulo do Gato: Ordenar do maior para o menor (pela área)
+    # Assim, o primeiro ponto de qualquer aglomeração SEMPRE será o "mais forte"
+    dados_ordenados = sorted(dados_pontos, key=lambda x: x[1], reverse=True)
+
+    # 2. Separar apenas as coordenadas para a matemática vetorial do NumPy
+    pontos = np.array([item[0] for item in dados_ordenados])
+
+    finais = []
+    visitados = np.zeros(len(pontos), dtype=bool)
+
+    for i in range(len(pontos)):
+        if visitados[i]:
+            continue
+
+        # Como ordenamos antes, este p_atual é garantidamente o de MAIOR ÁREA na vizinhança
+        p_atual = pontos[i]
+        finais.append(p_atual.astype(int))
+
+        # Magia do NumPy: Calcula a distância deste ponto para TODOS os outros de uma vez
+        distancias = np.linalg.norm(pontos - p_atual, axis=1)
+
+        # Marca como 'visitado' (descarta) todos que estiverem dentro do raio de tolerância.
+        # Os que estão sendo descartados têm área menor ou igual ao p_atual.
+        visitados[distancias < raio] = True
+
+    return np.array(finais)
+# ====================================================================
+# SUBSISTEMA DE CORTES REFATORADO E OTIMIZADO
+# ====================================================================
+
+def encontrar_pares_corte(pontos_vale, mask_pedras, raio_max=69):
+    """
+    Vetorizado. Usa a máscara sólida em vez de polígonos para evitar
+    o problema de pedras isoladas (ilhas) sendo ignoradas.
+    """
+    if len(pontos_vale) < 2:
+        return []
+
+    pontos = np.array(pontos_vale)
+    n_pontos = len(pontos)
+
+    diffs = pontos[:, np.newaxis, :] - pontos[np.newaxis, :, :]
+    dist_matrix = np.linalg.norm(diffs, axis=-1)
+
+    pares_candidatos = []
+    altura_img, largura_img = mask_pedras.shape[:2]
+
+    for i in range(n_pontos):
+        for j in range(i + 1, n_pontos):
+            dist = dist_matrix[i, j]
+
+            if dist < raio_max:
+                # 2. NOVA Verificação Rápida e Robusta de Interseção:
+                # Testamos 3 pontos internos ao longo da linha (25%, 50% e 75%)
+                # para evitar falsos negativos caso a pedra tenha bordas irregulares.
+
+                pA = pontos[i]
+                pB = pontos[j]
+
+                # Fatores de interpolação (o quão longe estamos de A em direção a B)
+                fracoes = [0.25, 0.50, 0.75]
+
+                linha_valida = False
+                for f in fracoes:
+                    # Calcula o ponto exato naquela fração da linha
+                    pt_amostra = pA + (pB - pA) * f
+                    mx, my = int(pt_amostra[0]), int(pt_amostra[1])
+
+                    # Checagem de segurança dos limites da imagem
+                    if 0 <= my < altura_img and 0 <= mx < largura_img:
+                        # Se achou pelo menos um pixel branco forte, a linha cruza a pedra
+                        if mask_pedras[my, mx] > 0:
+                            linha_valida = True
+                            break # Otimização: não precisa testar as outras frações
+
+                # Se após testar os 3 pontos todos caíram no fundo preto, descarta o par.
+                if not linha_valida:
+                    continue
+
+                # Pontuação base (distância)
+                score = 100.0 / (1.0 + dist)
+
+                # 3. Triangulação (Identificar ângulos +- 90°)
+                bonus_triangulacao = 1.0
+                # dist_AB = dist
+
+                for k in range(n_pontos):
+                    if k != i and k != j:
+                        dist_AC = dist_matrix[i, k]
+
+                        # Usando a sua margem de proporção testada
+                        dist_real = 65 * zoom_factor
+                        # if (dist_AB * 1.7) < dist_AC < (dist_AB * 3.2):
+                        if dist_real > dist_AC > dist_real * 0.5:
+                            # print(f"Corte Dentro do range: dist_AB: {dist_AB} -- dist_AC: {dist_AC}")
+                            v1 = pontos[j] - pontos[i]
+                            v2 = pontos[k] - pontos[i]
+                            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+
+                            if n1 > 0 and n2 > 0:
+                                cos_theta = np.dot(v1, v2) / (n1 * n2)
+                                if abs(cos_theta) < 0.35:
+                                    bonus_triangulacao = 2.0
+                                    break
+                #         # else:
+                        #     print(f"Corte fora do range: dist_AB: {dist_AB} -- dist_AC: {dist_AC}")
+                score *= bonus_triangulacao
+                pares_candidatos.append((i, j, score))
+
+    # Ordenar pelos melhores cortes
+    pares_candidatos.sort(key=lambda x: x[2], reverse=True)
+
+    # Evitar reutilização de pontos
+    pares_finais = []
+    pontos_usados = set()
+
+    for i, j, score in pares_candidatos:
+        if i not in pontos_usados and j not in pontos_usados:
+            pares_finais.append((pontos[i], pontos[j], score))
+            pontos_usados.add(i)
+            pontos_usados.add(j)
+
+    return pares_finais
+
+def cortar_nos_vales_inteligente(mask_pedra_solida, pontos_vale, pares_corte):
+    """
+    Aplica as linhas de corte geradas pelo algoritmo otimizado.
+    """
+    if not pares_corte:
+        contours, _ = cv2.findContours(mask_pedra_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        return contours
+
+    mask_cortada = mask_pedra_solida.copy()
+
+    for p1, p2, _ in pares_corte:
+        cv2.line(mask_cortada, p1, p2, 0, thickness=2)
+        cv2.circle(mask_cortada, p1, 2, 0, -1)
+        cv2.circle(mask_cortada, p2, 2, 0, -1)
+
+    contours_apos, _ = cv2.findContours(mask_cortada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    return contours_apos
+
+
 
 # ====================================================================
 # ENCERRAMENTO SEGURO
@@ -848,14 +992,15 @@ def toggle_video():
 
 @app.route('/api/config', methods=['POST'])
 def atualizar_config():
-    global TEMPO_MEMORIA, INTERVALO_SEGUNDOS
+    global INTERVALO_SEGUNDOS
     dados = request.get_json()
 
-    # Atualiza as variáveis globais em tempo real!
-    TEMPO_MEMORIA = float(dados.get('tempo_memoria', TEMPO_MEMORIA))
     INTERVALO_SEGUNDOS = float(dados.get('intervalo_segundos', INTERVALO_SEGUNDOS))
+    if dados:
+        print(f"Ataulizado o tempo de leitura - {INTERVALO_SEGUNDOS}")
+    # Atualiza as variáveis globais em tempo real!
 
-    print(f"⚙️ Config atualizada: Memória = {TEMPO_MEMORIA}s | Intervalo = {INTERVALO_SEGUNDOS}s")
+
     return jsonify({"status": "sucesso"})
 
 @app.route('/')
@@ -899,7 +1044,7 @@ def action_exec():
     dados = request.get_json()
     actions['action'] = dados.get('action')
     actions['action1'] = dados.get('action1')
-    actions['action2'] = dados.get('action2')
+    # actions['action2'] = dados.get('action2')
 
     # Se fomos ler a mão de alguém, armamos o gatilho da foto!
     if actions['action'] == 'reset':
@@ -908,8 +1053,8 @@ def action_exec():
     if actions['action1'] == 'calibrar':
         modoAuto = True
 
-    if actions['action2'] == 'valor_zoom':
-        return jsonify({"zoom": zoom_factor})
+    # if actions['action2'] == 'valor_zoom':
+    #     return jsonify({"zoom": zoom_factor})
 
     return jsonify({"status": "sucesso"})
 
