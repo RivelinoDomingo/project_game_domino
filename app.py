@@ -17,7 +17,7 @@ zoom_factor = 1.3
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
-INTERVALO_SEGUNDOS = 2.0
+INTERVALO_SEGUNDOS = 0.5
 executando_servidor = True
 enviar_video = True
 DISTANCIA_MINIMA = 37
@@ -1068,7 +1068,7 @@ def action_exec():
     dados = request.get_json()
     actions['action'] = dados.get('action')
     actions['action1'] = dados.get('action1')
-    # actions['action2'] = dados.get('action2')
+    actions['action2'] = dados.get('action2')
 
     # Se fomos ler a mão de alguém, armamos o gatilho da foto!
     if actions['action'] == 'reset':
@@ -1077,8 +1077,8 @@ def action_exec():
     if actions['action1'] == 'calibrar':
         modoAuto = True
 
-    # if actions['action2'] == 'valor_zoom':
-    #     return jsonify({"zoom": zoom_factor})
+    if actions['action2'] == 'valor_zoom':
+        return jsonify({"zoom": zoom_factor})
 
     return jsonify({"status": "sucesso"})
 

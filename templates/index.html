@@ -300,7 +300,7 @@
 
         <div class="config-group">
             <label for="inputIntervalo">⏱️ Intervalo (s):</label>
-            <input type="number" id="inputIntervalo" value="2.0" step="0.5" min="0.5" max="5">
+            <input type="number" id="inputIntervalo" value="0.5" step="0.1" min="0.3" max="2">
         </div>
 
         <button id="btnForcarMesa" style="width: 100%; padding: 10px; background: #e67e22; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
@@ -736,7 +736,6 @@
         // Substitua os setIntervals por requestAnimationFrame para melhor performance
         let animationId = null;
         let ultimoUpdate = 0;
-        const INTERVALO_UPDATE = 500; // 1 segundo
         const INTERVALO_FIREBASE = 5000; // 5 segundos
         let start = true;
 
@@ -783,6 +782,47 @@
             }, 500);
         }
 
+        // ==========================================
+        // CONFIGURAÇÕES DO FILTRO ANTI-RUÍDO
+        // ==========================================
+        const FREQUENCIA_FETCH_MS = 500;  // A página puxa dados a cada 0.5s
+        const JANELA_TEMPO_MS = 5000;     // Avalia uma "memória" de 2.5s
+        const TAMANHO_BUFFER = JANELA_TEMPO_MS / FREQUENCIA_FETCH_MS; // Resulta em 5 frames
+        const MIN_APARICOES = 3;          // Pedra precisa aparecer em 3 de 5 frames para ser confirmada
+
+        // Buffers para guardar o histórico das últimas 5 leituras
+        let bufferMesa = [];
+        let bufferJogadores = { p1: [], p2: [], p3: [], p4: [] };
+
+        function filtrarPedrasRecorrentes(bufferDePedras) {
+            const contagem = {};
+            const ultimaReferencia = {};
+
+            // Percorre o histórico das últimas leituras
+            bufferDePedras.forEach(listaDePedras => {
+                listaDePedras.forEach(pedra => {
+                    // Ordena o valor (ex: "4|2" vira "2|4") para garantir que o sistema não veja como 2 pedras diferentes
+                    const partes = pedra.valor.split('|').map(Number).sort();
+                    const idPedra = `${partes[0]}|${partes[1]}`;
+
+                    contagem[idPedra] = (contagem[idPedra] || 0) + 1;
+
+                    // Salva o objeto mais recente para mantermos as coordenadas (x,y) e ângulos sempre atualizados
+                    ultimaReferencia[idPedra] = pedra;
+                });
+            });
+
+            // Retorna para a interface apenas as pedras que sobreviveram ao corte
+            const pedrasFiltradas = [];
+            for (const id in contagem) {
+                if (contagem[id] >= MIN_APARICOES) {
+                    pedrasFiltradas.push(ultimaReferencia[id]);
+                }
+            }
+
+            return pedrasFiltradas;
+        }
+
         // Modifique a função loopDoJogo para incluir a verificação de duplicata
         async function loopDoJogo() {
             try {
@@ -795,26 +835,44 @@
                     console.log(dados.duplicada);
                 }
 
-                // Renderiza a mesa usando o "Mapa Físico"
-                renderizarMesaFisica(dados.mesa);
+                // ==========================================
+                // 1. ALIMENTAR OS BUFFERS E DESCARTAR O ANTIGO
+                // ==========================================
+                bufferMesa.push(dados.mesa);
+                if (bufferMesa.length > TAMANHO_BUFFER) bufferMesa.shift();
 
-                // Renderiza os Jogadores usando o "Alinhamento Normal"
                 ['p1', 'p2', 'p3', 'p4'].forEach(jogador => {
                     if (dados.jogadores[jogador]) {
-                        renderizarMaoJogador(dados.jogadores[jogador], `pedras-${jogador}`, dados.mesa);
+                        bufferJogadores[jogador].push(dados.jogadores[jogador]);
+                        if (bufferJogadores[jogador].length > TAMANHO_BUFFER) {
+                            bufferJogadores[jogador].shift();
+                        }
                     }
+                });
 
-                    // Regra do Sino: Se leu 7 pedras do jogador atual
-                    if (dados.modo_atual === jogador && dados.jogadores[jogador] && dados.jogadores[jogador].length === 7) {
-                        document.getElementById('somSucesso').play();
+                // ==========================================
+                // 2. APLICAR O FILTRO E RENDERIZAR
+                // ==========================================
 
-                        // Força a câmera voltar para a mesa
-                        fetch('/api/set_modo', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ modo: 'mesa' })
-                        });
-                        alert(`Mão do Jogador ${jogador.toUpperCase()} validada com sucesso!`);
+                // Filtra a mesa e desenha
+                const mesaFiltrada = filtrarPedrasRecorrentes(bufferMesa);
+                renderizarMesaFisica(mesaFiltrada);
+
+                // Filtra os jogadores e desenha
+                ['p1', 'p2', 'p3', 'p4'].forEach(jogador => {
+                    if (dados.jogadores[jogador]) {
+                        const maoFiltrada = filtrarPedrasRecorrentes(bufferJogadores[jogador]);
+                        renderizarMaoJogador(maoFiltrada, `pedras-${jogador}`, mesaFiltrada);
+
+                        // Regra do Sino usando a mão filtrada (evita tocar o sino por leitura falsa)
+                        if (dados.modo_atual === jogador && maoFiltrada.length === 7) {
+                            document.getElementById('somSucesso').play();
+                            fetch('/api/set_modo', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ modo: 'mesa' })
+                            });
+                        }
                     }
                 });
 
@@ -866,7 +924,7 @@
         }
 
         function loopAnimacao(timestamp) {
-            if (timestamp - ultimoUpdate >= INTERVALO_UPDATE) {
+            if (timestamp - ultimoUpdate >= FREQUENCIA_FETCH_MS) {
                 ultimoUpdate = timestamp;
                 loopDoJogo();
             }
