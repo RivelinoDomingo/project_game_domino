@@ -5,321 +5,322 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VAR do Dominó Oficial</title>
     <style>
+        /* =========================================
+           SISTEMA DE CORES E VARIÁVEIS
+           ========================================= */
+        :root {
+            --bg-body: #111418;
+            --table-center: #2ecc71;
+            --table-edge: #1e8449;
+            --panel-bg: rgba(26, 37, 47, 0.95);
+            --text-light: #ecf0f1;
+            --text-muted: #bdc3c7;
+            --accent-blue: #3498db;
+            --accent-blue-hover: #2980b9;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --domino-bg: #ecf0f1;
+            --domino-dot: #111;
+        }
+
+        /* TRAVAMENTO TOTAL DA TELA */
         body {
-            font-family: Arial, sans-serif;
-            background-color: #1e272e;
-            color: white;
-            text-align: center;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--table-edge);
+            color: var(--text-light);
             margin: 0;
-            padding: 20px;
-        }
-
-        /* =========================================
-           MENU LATERAL (MANTIDO DO ANTERIOR)
-           ========================================= */
-        #menu-btn {
-            position: fixed; top: 20px; right: 25px; font-size: 35px;
-            cursor: pointer; z-index: 1000; transition: 0.3s;
-        }
-        #menu-btn:hover { color: #3498db; }
-        #side-panel {
-            position: fixed; top: 0; right: -350px; width: 300px; height: 100%;
-            background-color: #2c3e50; border-left: 2px solid #34495e;
-            transition: 0.4s ease-in-out; padding: 80px 20px 20px;
-            box-shadow: -5px 0 15px rgba(0,0,0,0.5); z-index: 999; text-align: left;
-            box-sizing: border-box; overflow-y: auto;
-        }
-        #side-panel.open { right: 0; }
-        .config-group { background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .config-group label { display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px; }
-        .config-group input { width: 100%; box-sizing: border-box; }
-
-        /* =========================================
-           LAYOUT DA ARENA (JOGADORES E MESA)
-           ========================================= */
-        #arena {
-            display: grid;
-            /* Aumentamos as colunas laterais de 250px para 350px */
-            grid-template-columns: minmax(250px, 300px) 1fr minmax(250px, 300px);
-            grid-template-rows: auto 1fr auto;
-            gap: 20px;
-            max-width: 1900px;
-            margin: 0 auto;
-            min-height: 80vh;
-        }
-
-        .area-jogador {
-            background-color: #2c3e50;
-            border: 2px dashed #7f8c8d;
-            border-radius: 12px;
-            padding: 15px;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden; /* Proíbe scroll */
             position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
         }
 
-        /* Posicionamento dos jogadores no Grid */
-        #area-p3 { grid-column: 2; grid-row: 3; } /* Embaixo */
-        #area-p2 { grid-column: 3; grid-row: 2; } /* Direita */
-        #area-p1 { grid-column: 2; grid-row: 1; } /* Em cima */
-        #area-p4 { grid-column: 1; grid-row: 2; } /* Esquerda */
-
-        #area-mesa {
-            grid-column: 2;
-            grid-row: 2;
-            background-color: #27ae60; /* Verde estilo mesa de bilhar/dominó */
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
-            display: flex;
-            flex-wrap: wrap;
-            align-content: center;
-            justify-content: center;
-            gap: 10px;
-        }
-
-        .header-jogador {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start; /* Alinha pelo topo agora */
-            width: 100%;
-            margin-bottom: 15px;
-            border-bottom: 1px solid #7f8c8d;
-            padding-bottom: 10px;
-        }
-
-        .info-placar {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 5px;
-        }
-
-        .nome-jogador {
+        h1.main-title {
+            position: absolute;
+            top: 15px;
+            left: 20px;
             font-size: 18px;
-            font-weight: bold;
-            color: #ecf0f1;
+            margin: 0;
+            z-index: 100;
+            opacity: 0.3;
+            pointer-events: none;
+            letter-spacing: 2px;
             text-transform: uppercase;
         }
 
-        .bolinhas-container {
-            display: flex;
-            gap: 4px;
-        }
-
-        .bolinha-placar {
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background-color: #7f8c8d; /* Cinza (Padrão) */
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
-        }
-
-        .bolinha-placar.ativa {
-            background-color: #f1c40f; /* Amarelo (Ponto marcado) */
-            box-shadow: 0 0 8px rgba(241, 196, 15, 0.8), inset 0 1px 2px rgba(255,255,255,0.5);
-        }
-
-        .extras-placar {
-            font-size: 14px;
-            color: #bdc3c7;
-            display: flex;
-            gap: 10px;
-        }
-
-        .btn-scan {
-            background-color: #3498db;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            padding: 5px 10px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: 0.2s;
-        }
-        .btn-scan:hover { background-color: #2980b9; }
-        .btn-scan.ativo { background-color: #e74c3c; animation: piscar 1s infinite; }
-
-        @keyframes piscar {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .container-pedras {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
-            justify-content: center;
-            min-height: 60px;
-            width: 100%;
-        }
-
-        .domino.gato {
-            box-shadow: 0 0 25px rgba(255, 0, 0, 1);
-            border: 2px solid #ff0000;
-            animation: alertaGato 0.6s infinite alternate;
-            z-index: 100; /* Força o gato a brilhar por cima das outras pedras */
-        }
-
-        @keyframes alertaGato {
-            from { box-shadow: 0 0 5px rgba(255, 0, 0, 0.8); }
-            to { box-shadow: 0 0 35px rgba(255, 0, 0, 1), inset 0 0 10px rgba(255,0,0,0.5); }
-        }
-
         /* =========================================
-        POPUP DE AVISO (TOAST NOTIFICATION)
-        ========================================= */
-        .toast-notification {
+           MENU LATERAL
+           ========================================= */
+        #menu-btn {
             position: fixed;
-            bottom: 30px;
-            right: 30px;
-            background-color: #e74c3c;
-            color: white;
-            padding: 15px 25px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            top: 20px;
+            right: 25px;
+            font-size: 30px;
+            cursor: pointer;
+            z-index: 1000;
+            transition: color 0.3s, transform 0.2s;
+            background: rgba(0,0,0,0.3);
+            width: 50px;
+            height: 50px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            z-index: 2000;
-            transform: translateX(400px);
-            transition: transform 0.3s ease-in-out;
-            font-weight: bold;
-            max-width: 350px;
-            border-left: 5px solid #c0392b;
+            justify-content: center;
+            border-radius: 50%;
+            backdrop-filter: blur(5px);
         }
+        #menu-btn:hover { color: var(--accent-blue); transform: scale(1.05); }
 
-        .toast-notification.show {
-            transform: translateX(0);
+        #side-panel {
+            position: fixed; top: 0; right: -350px; width: 320px; height: 100%;
+            background-color: var(--panel-bg);
+            border-left: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            padding: 80px 25px 25px;
+            box-shadow: -10px 0 30px rgba(0,0,0,0.8);
+            z-index: 999; box-sizing: border-box; overflow-y: auto;
         }
+        #side-panel.open { right: 0; }
+        #side-panel h2 { margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; font-weight: 500; }
 
-        .toast-icon {
-            font-size: 24px;
-        }
+        .config-group { background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05); }
+        .config-group label { display: block; margin-bottom: 10px; font-weight: 500; font-size: 14px; }
+        .config-group input[type="range"], .config-group input[type="number"] { width: 100%; box-sizing: border-box; }
 
-        .toast-content {
-            flex: 1;
-        }
-
-        .toast-title {
-            font-size: 16px;
-            margin-bottom: 4px;
-        }
-
-        .toast-message {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .toast-close {
-            cursor: pointer;
-            font-size: 20px;
-            opacity: 0.7;
-            transition: opacity 0.2s;
-        }
-
-        .toast-close:hover {
-            opacity: 1;
-        }
+        .btn-action { width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 10px; font-size: 14px; }
+        #btnForcarMesa { background: #e67e22; color: white; }
+        #btnForcarMesa:hover { background: #d35400; }
+        #btnResetMao { background: var(--danger); color: white; }
+        #btnResetMao:hover { background: #c0392b; }
 
         /* =========================================
-           O DOMINÓ COM BOLINHAS REAIS (Tamanho reduzido para caber nas mãos)
+           ARENA (FUNDO VERDE ABSOLUTO)
            ========================================= */
-        .domino {
-            width: 36px;
-            height: 72px;
-            background-color: #ecf0f1;
-            border-radius: 6px;
+        #arena {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(circle at center, var(--table-center) 0%, var(--table-edge) 100%);
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.6);
+            z-index: 1;
+        }
+
+        /* JOGADORES (POSICIONAMENTO HUD CRAVADO NAS BORDAS) */
+        .area-jogador {
+            position: absolute;
             display: flex;
+            z-index: 10;
+        }
+
+        /* P1 (Topo) e P3 (Base) - Horizontais */
+        #area-p1, #area-p3 {
+            left: 140px; /* Libera espaço para as laterais */
+            right: 140px;
+            height: 140px; /* Tamanho fixo, não empurra mais a tela */
+        }
+
+        #area-p1 {
+            top: 0;
             flex-direction: column;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.6);
-            padding: 3px;
+        }
+
+        #area-p3 {
+            bottom: 0;
+            flex-direction: column-reverse; /* Inverte: Header cola no fundo, pedras ficam em cima */
+        }
+
+        #area-p1 .header-jogador, #area-p3 .header-jogador {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            padding: 10px 20px;
             box-sizing: border-box;
         }
 
-        /* Pedras na mesa são maiores */
-        #area-mesa .domino {
-            width: 50px; height: 100px;
+        /* P4 (Esquerda) e P2 (Direita) - Verticais */
+        #area-p4, #area-p2 {
+            top: 0;
+            bottom: 0;
+            width: 140px; /* Largura fixa */
         }
 
-        .metade {
-            flex: 1;
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            grid-template-rows: repeat(3, 1fr);
-            gap: 1px;
+        #area-p4 {
+            left: 0;
+            flex-direction: row; /* Header na esquerda colado na borda */
         }
 
-        .domino.jogada {
-            box-shadow: 0 0 15px rgba(255, 0, 0, 0.9); /* Sombra vermelha brilhante */
-            opacity: 0.4; /* Fica meio transparente */
-            border: 2px solid #e74c3c;
-            transform: scale(0.9); /* Encolhe um pouquinho para dar sensação de "usada" */
-            transition: all 0.3s ease;
+        #area-p2 {
+            right: 0;
+            flex-direction: row-reverse; /* Header na direita colado na borda */
         }
 
-        .traco { height: 2px; background-color: #2c3e50; width: 90%; margin: 1px auto; }
-        .ponto { background-color: black; border-radius: 50%; width: 6px; height: 6px; place-self: center; }
-        #area-mesa .ponto { width: 8px; height: 8px; }
-        .ponto.vazio { background-color: transparent; }
+        #area-p4 .header-jogador, #area-p2 .header-jogador {
+            writing-mode: vertical-rl;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 100%;
+            padding: 20px 10px;
+            box-sizing: border-box;
+        }
 
+        #area-p4 .header-jogador { transform: rotate(180deg); }
+
+        /* Estilos de Textos e Placares */
+        .info-placar { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+        #area-p4 .info-placar, #area-p2 .info-placar { flex-direction: row; align-items: center; }
+
+        .nome-jogador {
+            font-size: 15px; font-weight: 700; color: var(--text-light);
+            text-transform: uppercase; letter-spacing: 1px;
+            text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
+        }
+
+        .bolinhas-container { display: flex; gap: 4px; }
+        .bolinha-placar {
+            width: 12px; height: 12px; border-radius: 50%;
+            background-color: rgba(255,255,255,0.3); box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .bolinha-placar.ativa {
+            background-color: var(--warning);
+            box-shadow: 0 0 8px rgba(241, 196, 15, 0.8), inset 0 1px 2px rgba(255,255,255,0.5);
+        }
+
+        .extras-placar { font-size: 14px; display: flex; gap: 10px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8);}
+
+        .btn-scan {
+            background-color: rgba(52, 152, 219, 0.8);
+            color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 20px;
+            padding: 6px 15px; cursor: pointer; font-weight: bold; font-size: 12px;
+            transition: 0.2s; backdrop-filter: blur(4px); white-space: nowrap;
+        }
+        .btn-scan:hover { background-color: var(--accent-blue); transform: scale(1.05); }
+        .btn-scan.ativo { background-color: var(--danger); animation: piscar 1s infinite; }
+
+        @keyframes piscar {
+            0% { opacity: 1; box-shadow: 0 0 10px var(--danger); }
+            50% { opacity: 0.6; box-shadow: none; }
+            100% { opacity: 1; box-shadow: 0 0 10px var(--danger); }
+        }
+
+        /* Container Limitado para Pedras */
+        .container-pedras {
+            display: flex; flex-wrap: wrap; gap: 6px;
+            padding: 10px; justify-content: center; align-content: center;
+            flex: 1; overflow: hidden; /* Impede que cresça e quebre o layout */
+        }
+
+        /* =========================================
+           A MESA CENTRAL
+           ========================================= */
+        #area-mesa {
+            position: absolute;
+            top: 140px; bottom: 140px; left: 140px; right: 140px;
+            display: flex; align-items: center; justify-content: center;
+            z-index: 5;
+        }
+
+        .mesa-watermark {
+            position: absolute; text-align: center; pointer-events: none; opacity: 0.4; z-index: 1;
+        }
+        .mesa-watermark h3 { font-size: 2.5rem; color: white; text-shadow: 0 4px 15px rgba(0,0,0,0.5); margin: 0 0 10px 0; font-weight: 300; letter-spacing: 2px; }
+        .mesa-watermark p { margin: 0; font-size: 1.2rem; color: rgba(255,255,255,0.8); }
+
+        #pedras-mesa {
+            position: absolute !important;
+            top: 0; left: 0; right: 0; bottom: 0;
+            width: 100% !important; height: 100% !important;
+            z-index: 5; padding: 0; margin: 0; overflow: visible;
+        }
+
+        /* =========================================
+           DOMINÓS E ESTILOS FÍSICOS
+           ========================================= */
+        .domino {
+            width: 36px; height: 72px; background-color: var(--domino-bg); border-radius: 6px;
+            display: flex; flex-direction: column; box-sizing: border-box; padding: 3px;
+            box-shadow: 3px 4px 8px rgba(0,0,0,0.5), inset -1px -1px 3px rgba(0,0,0,0.1);
+            transition: all 0.2s ease;
+        }
+        #area-mesa .domino { width: 46px; height: 92px; border-radius: 8px; }
+
+        .metade { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 1px; }
+
+        .domino.jogada { box-shadow: 0 0 15px rgba(255, 0, 0, 0.9); opacity: 0.5; border: 2px solid var(--danger); transform: scale(0.9); filter: grayscale(0.5); }
+        .domino.gato { box-shadow: 0 0 30px rgba(255, 0, 0, 1); border: 2px solid #ff0000; animation: alertaGato 0.6s infinite alternate; z-index: 100; }
+
+        @keyframes alertaGato {
+            from { box-shadow: 0 0 10px rgba(255, 0, 0, 0.8); transform: scale(1); }
+            to { box-shadow: 0 0 40px rgba(255, 0, 0, 1), inset 0 0 15px rgba(255,0,0,0.5); transform: scale(1.05); }
+        }
+
+        .traco { height: 2px; background-color: var(--domino-dot); width: 90%; margin: 1px auto; border-radius: 1px; }
+        .ponto { background-color: var(--domino-dot); border-radius: 50%; width: 7px; height: 7px; place-self: center; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.5);}
+        #area-mesa .ponto { width: 9px; height: 9px; }
+        .ponto.vazio { background-color: transparent; box-shadow: none; }
+
+        /* =========================================
+           POPUP DE AVISO (TOAST)
+           ========================================= */
+        .toast-notification {
+            position: fixed; bottom: 30px; right: 30px; background-color: var(--danger); color: white;
+            padding: 15px 25px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            display: flex; align-items: center; gap: 15px; z-index: 2000; transform: translateX(120%);
+            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55); max-width: 380px; border-left: 6px solid #c0392b;
+        }
+        .toast-notification.show { transform: translateX(0); }
+        .toast-icon { font-size: 28px; }
+        .toast-content { flex: 1; }
+        .toast-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+        .toast-message { font-size: 14px; opacity: 0.9; }
+        .toast-close { cursor: pointer; font-size: 20px; opacity: 0.7; transition: 0.2s; }
+        .toast-close:hover { opacity: 1; }
+
+        @media (max-width: 1200px) {
+            #area-p1, #area-p3 { height: 110px; left: 110px; right: 110px; }
+            #area-p4, #area-p2 { width: 110px; }
+            #area-mesa { top: 110px; bottom: 110px; left: 110px; right: 110px; }
+            .nome-jogador { font-size: 13px; }
+        }
     </style>
 </head>
 <body>
 
-<!--     <audio id="somSucesso" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio> -->
     <audio id="somSucesso" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" ></audio>
+
+    <h1 class="main-title">VAR do Dominó</h1>
 
     <div id="menu-btn">☰</div>
 
     <div id="side-panel">
-        <h2 style="margin-top: 0; border-bottom: 1px solid #7f8c8d; padding-bottom: 10px;">Configurações</h2>
+        <h2>⚙️ Configurações</h2>
 
         <div class="config-group">
-            <label style="cursor: pointer;">
-                <input type="checkbox" id="videoToggle" checked style="transform: scale(1.3); margin-right: 8px;">
-                📹 Mostrar Visão Câmera
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                <input type="checkbox" id="videoToggle" checked style="width: 20px; height: 20px;">
+                Mostrar Visão Câmera
             </label>
         </div>
 
         <div id="videoContainer" style="margin-bottom: 20px;">
-            <img id="videoFeed" src="/video_feed" style="width: 100%; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
+            <img id="videoFeed" src="/video_feed" style="width: 100%; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);">
         </div>
 
         <div class="config-group">
-            <label for="zoomSlider">🔍 Zoom: <span id="zoomValor">1.0</span>x</label>
+            <label for="zoomSlider">🔍 Zoom: <span id="zoomValor" style="color: var(--accent-blue); font-weight: bold;">1.0</span>x</label>
             <input type="range" id="zoomSlider" min="0.5" max="3.0" step="0.01" value="1.0">
         </div>
-<!--
-        <div class="config-group">
-            <label for="inputMemoria">🧠 Tempo Memória (s):</label>
-            <input type="number" id="inputMemoria" value="4.0" step="0.5" min="0.5" max="10">
-        </div>-->
 
         <div class="config-group">
-            <label for="inputIntervalo">⏱️ Intervalo (s):</label>
+            <label for="inputIntervalo">⏱️ Intervalo Análise (s):</label>
             <input type="number" id="inputIntervalo" value="0.5" step="0.1" min="0.3" max="2">
         </div>
 
-        <button id="btnForcarMesa" style="width: 100%; padding: 10px; background: #e67e22; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
-            Voltar Câmera para MESA
-        </button>
-        <p>
-            <button id="btnResetMao" style="width: 100%; padding: 10px; background: #ff0000; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
-                Resetar mão dos Jogadores
-            </button>
-        </p>
-
-        <!--<p>
-            <button id="btnAutoZoom" style="width: 100%; padding: 10px; background: #00ff7f; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
-                Auto calibrar zoom
-            </button>
-        </p>-->
+        <button id="btnForcarMesa" class="btn-action">📸 Restaurar Foco MESA</button>
+        <button id="btnResetMao" class="btn-action">🗑️ Resetar Mão dos Jogadores</button>
     </div>
-
-    <h1>VAR do Dominó Oficial 🎲</h1>
 
     <div id="arena">
 
@@ -335,21 +336,24 @@
             <div class="container-pedras" id="pedras-p4"></div>
         </div>
 
-        <div class="area-jogador" id="area-p3">
+        <div class="area-jogador" id="area-p1">
             <div class="header-jogador">
                 <div class="info-placar">
-                    <span class="nome-jogador" id="nome-p3">Carregando...</span>
-                    <div class="bolinhas-container" id="bolinhas-p3"></div>
-                    <div class="extras-placar" id="extras-p3"></div>
+                    <span class="nome-jogador" id="nome-p1">Carregando...</span>
+                    <div class="bolinhas-container" id="bolinhas-p1"></div>
+                    <div class="extras-placar" id="extras-p1"></div>
                 </div>
-                <button class="btn-scan" onclick="iniciarEscaneamento('p3')">[+] Escanear</button>
+                <button class="btn-scan" onclick="iniciarEscaneamento('p1')">[+] Escanear</button>
             </div>
-            <div class="container-pedras" id="pedras-p3"></div>
+            <div class="container-pedras" id="pedras-p1"></div>
         </div>
 
         <div id="area-mesa">
-            <h3 style="width: 100%; margin: 0 0 10px 0; text-align: left; color: #ecf0f1; text-shadow: 1px 1px 2px black;">Mesa Central</h3>
-            <div class="container-pedras" id="pedras-mesa" style="justify-content: flex-start;">Aguardando jogadas...</div>
+            <div class="mesa-watermark">
+                <h3>Mesa Central</h3>
+                <p id="texto-status-mesa">Aguardando jogadas...</p>
+            </div>
+            <div class="container-pedras" id="pedras-mesa"></div>
         </div>
 
         <div class="area-jogador" id="area-p2">
@@ -364,33 +368,29 @@
             <div class="container-pedras" id="pedras-p2"></div>
         </div>
 
-        <div class="area-jogador" id="area-p1">
+        <div class="area-jogador" id="area-p3">
             <div class="header-jogador">
                 <div class="info-placar">
-                    <span class="nome-jogador" id="nome-p1">Carregando...</span>
-                    <div class="bolinhas-container" id="bolinhas-p1"></div>
-                    <div class="extras-placar" id="extras-p1"></div>
+                    <span class="nome-jogador" id="nome-p3">Carregando...</span>
+                    <div class="bolinhas-container" id="bolinhas-p3"></div>
+                    <div class="extras-placar" id="extras-p3"></div>
                 </div>
-                <button class="btn-scan" onclick="iniciarEscaneamento('p1')">[+] Escanear</button>
+                <button class="btn-scan" onclick="iniciarEscaneamento('p3')">[+] Escanear</button>
             </div>
-            <div class="container-pedras" id="pedras-p1"></div>
+            <div class="container-pedras" id="pedras-p3"></div>
         </div>
-
-
 
     </div>
 
-    <!-- Popup de aviso de duplicata -->
     <div id="toastDuplicata" class="toast-notification">
         <div class="toast-icon">⚠️</div>
         <div class="toast-content">
-            <div class="toast-title">Pedra Duplicada Detectada!</div>
+            <div class="toast-title">Pedra Duplicada!</div>
             <div class="toast-message" id="toastMessage"></div>
         </div>
         <div class="toast-close" onclick="fecharToast()">✖</div>
     </div>
 
-    <!-- Som para duplicata (opcional) -->
     <audio id="somErro" src="https://assets.mixkit.co/active_storage/sfx/2870/2870-preview.mp3" preload="auto"></audio>
 
     <script>
@@ -788,7 +788,7 @@
         const FREQUENCIA_FETCH_MS = 500;  // A página puxa dados a cada 0.5s
         const JANELA_TEMPO_MS = 5000;     // Avalia uma "memória" de 2.5s
         const TAMANHO_BUFFER = JANELA_TEMPO_MS / FREQUENCIA_FETCH_MS; // Resulta em 5 frames
-        const MIN_APARICOES = 3;          // Pedra precisa aparecer em 3 de 5 frames para ser confirmada
+        const MIN_APARICOES = 5;          // Pedra precisa aparecer em 3 de 5 frames para ser confirmada
 
         // Buffers para guardar o histórico das últimas 5 leituras
         let bufferMesa = [];

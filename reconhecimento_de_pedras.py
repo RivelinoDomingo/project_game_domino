@@ -21,7 +21,7 @@ CONFIG_VALES = {
     'distancia_filtro': 20,
     'distancia_corte': 62,
     'distancia_conexao': 600,
-    'tamanho_kernel_morfologia': 25, # Novo parâmetro para o tamanho da fenda a ser fechada
+    'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
     'area_max': 2000,                # Area maxima das pedras
     'area_min': 800,
     'area_ponto': 30,
@@ -322,7 +322,7 @@ def extrair_e_contar(img, rect_pedra):
         area = 0.0
         for c in contornos:
             area += cv2.contourArea(c)
-            if area >= 11:
+            if area >= 21:
                 zero_local = True
                 break
 
