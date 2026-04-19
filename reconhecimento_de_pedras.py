@@ -22,7 +22,7 @@ CONFIG_VALES = {
     'distancia_corte': 62,
     'distancia_conexao': 600,
     'tamanho_kernel_morfologia': 25, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 2800,                # Area maxima das pedras
+    'area_max': 2000,                # Area maxima das pedras
     'area_min': 800,
     'area_ponto': 30,
 }
@@ -58,7 +58,8 @@ def pipeline_blackhat(args):
     mask_filtrada = np.zeros_like(gray)
 
     # Melhoria
-    fator_area = args.zoom ** 2
+    # fator_area = args.zoom ** 2
+    fator_area = 1.2 ** 2
     area_min = int(CONFIG_VALES['area_min'] * fator_area)
     area_max = int(CONFIG_VALES['area_max'] * fator_area)
     raio_corte = int(CONFIG_VALES['distancia_corte'] * args.zoom) # Distância é linear
@@ -103,7 +104,7 @@ def pipeline_blackhat(args):
         max_contorno = cv2.contourArea(max_contorno)
         # print(f"Maior contorno: {max_contorno}  -- Menor: {min_contorno}")
 
-        if max_contorno > area_max * 1.8:
+        if max_contorno > area_max * 2.8:
             print("Recalculando com mascara reduzinda!")
             print(f"Área max. permitida: {area_max * 1.8}")
             print(f"Área do maior Contorno: {max_contorno}")
@@ -139,7 +140,7 @@ def pipeline_blackhat(args):
         area = cv2.contourArea(cnt)
         # if area < 10 or area > 2200:
         #     continue
-        if area_max > area > area_max * 0.6:
+        if area_max > area > area_max * 0.3:
             rect = cv2.minAreaRect(cnt)
             center, size, angle = rect
             w_box, h_box = size
@@ -314,6 +315,17 @@ def extrair_e_contar(img, rect_pedra):
     M = cv2.getPerspectiveTransform(pts, dst)
     warped = cv2.warpPerspective(img, M, (40, 80))
 
+    contornos, _ = cv2.findContours(warped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    zero_local = False
+    if contornos:
+        area = 0.0
+        for c in contornos:
+            area += cv2.contourArea(c)
+            if area >= 11:
+                zero_local = True
+                break
+
     metade_cima = warped[0:40, 0:40]
     metade_baixo = warped[40:80, 0:40]
 
@@ -333,12 +345,12 @@ def extrair_e_contar(img, rect_pedra):
 
         contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        zero_local = False
-        if contornos:
-            maior_cnt = cv2.contourArea(max(contornos, key=cv2.contourArea))
-            # CORREÇÃO: Usando o zoom ao quadrado
-            if maior_cnt >= 20:
-                zero_local = True
+        # zero_local = False
+        # if contornos:
+        #     maior_cnt = cv2.contourArea(max(contornos, key=cv2.contourArea))
+        #     # CORREÇÃO: Usando o zoom ao quadrado
+        #     if maior_cnt >= 15:
+        #         zero_local = True
 
         pontos = 0
         # CORREÇÃO: Usando o zoom ao quadrado
@@ -352,19 +364,16 @@ def extrair_e_contar(img, rect_pedra):
                 if perimetro == 0:
                     continue
                 circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-                if circularidade >= 0.6:
+                if circularidade >= 0.5:
                     pontos += 1
             # print(f"Valor de Área={area}, Circularidade={circularidade}")
 
-        return min(pontos, 6), zero_local
+        return min(pontos, 6)
 
-    pts_cima, zero_1 = contar_bolinhas(metade_cima)
-    pts_baixo, zero_2 = contar_bolinhas(metade_baixo)
+    pts_cima = contar_bolinhas(metade_cima)
+    pts_baixo = contar_bolinhas(metade_baixo)
 
-    # Se qualquer uma das metades ativou a flag de ruído massivo, validamos a peça
-    zero_total = zero_1 or zero_2
-
-    return pts_cima, pts_baixo, zero_total
+    return pts_cima, pts_baixo, zero_local
 
 # ====================================================================
 # SUBSISTEMA DE LOCALIZAÇÂO DE VALES

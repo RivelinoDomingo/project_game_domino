@@ -13,7 +13,7 @@ app = Flask(__name__)
 # device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
 device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
-zoom_factor = 1.3
+zoom_factor = 1.2
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
@@ -95,10 +95,10 @@ def extrair_e_contar(img, rect_pedra):
         area = 0.0
         for c in contornos:
             area += cv2.contourArea(c)
-        # maior_cnt = cv2.contourArea(max(contornos, key=cv2.contourArea))
-        # CORREÇÃO: Usando o zoom ao quadrado
-        if area >= 25:
-            zero_local = True
+            if area >= 11:
+                zero_local = True
+                break
+
 
     metade_cima = warped[0:40, 0:40]
     metade_baixo = warped[40:80, 0:40]
