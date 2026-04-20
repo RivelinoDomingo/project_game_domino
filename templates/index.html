@@ -649,7 +649,7 @@
             const spanX = maxX - minX;
             const spanY = maxY - minY;
 
-            const fatorBase = 1.6;
+            const fatorBase = 1.4;
             const mesaW = container.clientWidth || 800;
             const mesaH = container.clientHeight || 500;
 
@@ -785,9 +785,9 @@
         // ==========================================
         // CONFIGURAÇÕES DO FILTRO ANTI-RUÍDO
         // ==========================================
-        const FREQUENCIA_FETCH_MS = 500;  // A página puxa dados a cada 0.5s
+        const FREQUENCIA_FETCH_MS = 200;  // A página puxa dados a cada 0.5s
         const JANELA_TEMPO_MS = 5000;     // Avalia uma "memória" de 2.5s
-        const TAMANHO_BUFFER = JANELA_TEMPO_MS / FREQUENCIA_FETCH_MS; // Resulta em 5 frames
+        const TAMANHO_BUFFER = JANELA_TEMPO_MS / (FREQUENCIA_FETCH_MS + 300); // Resulta em 5 frames
         const MIN_APARICOES = 5;          // Pedra precisa aparecer em 3 de 5 frames para ser confirmada
 
         // Buffers para guardar o histórico das últimas 5 leituras
@@ -924,7 +924,7 @@
         }
 
         function loopAnimacao(timestamp) {
-            if (timestamp - ultimoUpdate >= FREQUENCIA_FETCH_MS) {
+            if (timestamp - ultimoUpdate >= (FREQUENCIA_FETCH_MS + 300)) {
                 ultimoUpdate = timestamp;
                 loopDoJogo();
             }

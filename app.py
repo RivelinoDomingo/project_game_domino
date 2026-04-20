@@ -5,15 +5,17 @@ import math
 import time
 import threading
 import atexit
+import argparse
 from collections import deque
 
 app = Flask(__name__)
 
 # Configurações otimizadas
 # device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
-device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
+# device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
+device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
-zoom_factor = 1.2
+zoom_factor = 0.0
 ultima_leitura_pedras = []
 ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
@@ -34,7 +36,7 @@ zoom_reset = False
 zoom_change = False
 modoAuto = False
 
-debug_mode = False
+debug_mode = True
 
 # Cache para frames para evitar processamento repetido
 frame_buffer = deque(maxlen=2)
@@ -45,13 +47,21 @@ conf_busca = False
 cord_cont = (0, 0)
 area_base = 0
 
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Processa imagens de dominó')
+    parser.add_argument('-z', '--zoom', type=float, default=1.4, help='Nível de zoom (padrão 1.0)')
+    parser.add_argument('-p', '--proximidade', type=int, default=37, help='Distância mínima entre pedras')
+    parser.add_argument('-d', '--debug', action='store_true', help='Ativa modo depuração')
+    return parser.parse_args()
+
 CONFIG_VALES = {
-    'distancia_filtro': 15,
+    'distancia_filtro': 20,
     'distancia_mov': 15,
     'distancia_corte': 62,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
     'area_max': 2000,                # Area maxima das pedras
-    'area_min': 800,
+    'area_min': 500,
     'area_ponto': 30,
     'distancia_conexao': 120,
 }
@@ -133,7 +143,7 @@ def extrair_e_contar(img, rect_pedra):
         for c in contornos:
             area = cv2.contourArea(c)
             circularidade = 0.0
-            if point_area * 0.6 < area < point_area * 2.1:
+            if point_area * 0.4 < area < point_area * 2.1:
                 perimetro = cv2.arcLength(c, True)
                 if perimetro == 0:
                     continue
@@ -390,7 +400,7 @@ def loop_da_camera():
                 frames_sem_processar = 0
 
                 # Processa o frame
-                processar_frame(frame, tempo_atual)
+                processar_frame(frame, tempo_atual, args)
 
             # Só envia vídeo se necessário
             if enviar_video and ultimo_frame_processado is not None:
@@ -405,11 +415,15 @@ def loop_da_camera():
             print(f"Erro no loop principal: {e}")
             time.sleep(0.5)
 
-def processar_frame(img, tempo_atual):
+def processar_frame(img, tempo_atual, args):
     """Processa o frame de forma otimizada"""
     global ultima_leitura_pedras, ultimo_frame_processado, duplicada
     global resetMaoPlayers, maos_jogadores
     global modo_leitura, tirar_foto_debug, enviar_video, zoom_factor
+
+    ## Variaveis
+    debug_mode = args.debug
+    zoom_factor = args.zoom
 
     # Rotaciona a imagem para ficar mais adequando à mesa
     img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
@@ -452,6 +466,7 @@ def processar_frame(img, tempo_atual):
         print(f"📸 Foto salva: debug_mao_{modo_leitura}.jpeg")
         tirar_foto_debug = False
 
+
     # Processamento de visão computacional
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -459,7 +474,7 @@ def processar_frame(img, tempo_atual):
     # 1. ENCONTRAR A SILHUETA SÓLIDA BASE
     # ====================================================================
      # 1. Máscara Sólida Base
-    _, mask_branca = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
+    _, mask_branca = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
     contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     # cv2.imshow("1 - Mask Branca", mask_branca)
 
@@ -467,7 +482,7 @@ def processar_frame(img, tempo_atual):
     cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
 
     # cv2.imshow("1 - Mask Solida", mask_solida)
-    mask_solida = cv2.medianBlur(mask_solida, 5)
+    # mask_solida = cv2.medianBlur(mask_solida, 5)
     # cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
 
     global conf_busca, area_base, cord_cont, detectar_vales_por_morfologia
@@ -553,21 +568,24 @@ def processar_frame(img, tempo_atual):
         global actions, zoom_change, automatic_zoom, zoom_prev
 
         candidatos = []
+        rejeitados = []
 
-        if debug_mode:
-            print(f"Contornos encontrados: {len(cnt_finais)}")
+        # if debug_mode:
+        #     print(f"Contornos encontrados: {len(cnt_finais)}")
 
         for cnt in cnt_finais:
             area = cv2.contourArea(cnt)
-            # if area < 10 or area > 2200:
-            #     continue
+            reject = False
+            ratio = 0.0
+            rect = cv2.minAreaRect(cnt)
+            center, size, angle = rect
+            w_box, h_box = size
+
             if area_max > area > area_max * 0.3:
-                rect = cv2.minAreaRect(cnt)
-                center, size, angle = rect
-                w_box, h_box = size
 
                 if w_box == 0 or h_box == 0:
                     # print("Box com dimensões zeradas")
+                    reject = True
                     continue
 
                 width, height = size
@@ -586,6 +604,7 @@ def processar_frame(img, tempo_atual):
 
                 if not (2.4 >= ratio >= 1.5):
                     # print(f"Ratio fora do padrão: {ratio}")
+                    reject = True
                     continue
 
                 rect_pedra = (center, (width*margem_L, height*margem_A), angle)
@@ -596,9 +615,18 @@ def processar_frame(img, tempo_atual):
                     'area': area,
                     'ratio': ratio,
                 })
+            else:
+                reject = True
 
-        if debug_mode:
-            print(f"Candidatos aprovados: {len(candidatos)}")
+            if debug_mode and reject:
+                rejeitados.append({
+                    'centro': center,
+                    'area': area,
+                    'ratio': ratio,
+                })
+
+        # if debug_mode:
+        #     print(f"Candidatos aprovados: {len(candidatos)}")
 
         # Filtro por distância
         pedras_unicas = []
@@ -738,6 +766,25 @@ def processar_frame(img, tempo_atual):
             # Usamos a lista_final (que já tem o ângulo e o valor corrigidos para a Web)
             # ou a pedras_aprovadas (que tem as caixas retangulares cruas do OpenCV).
             # Como você quer desenhar o rect_pedra, vamos usar o pedras_aprovadas original daquele frame.
+            if debug_mode:
+                for p in rejeitados:
+                    try:
+                        area = p['area']
+                        ratio = p['ratio']
+                        # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
+                        cx, cy = map(int, p['centro'])
+                        cv2.circle(out, (cx, cy), 7, 0, 2)
+                        cv2.putText(out, f"Area maxima: {area_max}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                        cv2.putText(out, f"Area minima: {area_min}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    except Exception as e:
+                        # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
+                        print(f"Erro ao desenhar contorno no stream: {e}")
+                        pass
 
             for p in pedras_aprovadas:  # Limita desenho a 20 pedras por performance
                 try:
@@ -754,15 +801,9 @@ def processar_frame(img, tempo_atual):
                     # Como tiramos o valor de pedras_aprovadas, precisamos pegar da leitura.
                     # Se você preferir não ler o valor aqui para poupar CPU, basta remover as linhas abaixo.
                     pts_cima, pts_baixo, zero = extrair_e_contar(mask_pontos, p['rect_pedra'])
-                    area = p['area']
-                    ratio = p['ratio']
+
                     if not zero and f"{pts_cima}|{pts_baixo}" == "0|0":
                         continue
-                    if debug_mode:
-                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
                     cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                     cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
@@ -1100,6 +1141,7 @@ def estado_jogo():
 
 if __name__ == '__main__':
     # Inicia o loop da câmera em uma thread separada para não travar o servidor Web!
+    args = parse_arguments()
     t = threading.Thread(target=loop_da_camera, daemon=True)
     t.start()
 

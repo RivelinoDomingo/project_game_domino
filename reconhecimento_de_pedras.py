@@ -23,7 +23,7 @@ CONFIG_VALES = {
     'distancia_conexao': 600,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
     'area_max': 2000,                # Area maxima das pedras
-    'area_min': 800,
+    'area_min': 500,
     'area_ponto': 30,
 }
 
@@ -49,7 +49,7 @@ def pipeline_blackhat(args):
 
     # mask_branca = cv2.medianBlur(mask_branca, 3)
     # cv2.imshow("1 - Mask Branca", mask_branca)
-    mask_solida = cv2.medianBlur(mask_solida, 5)
+    # mask_solida = cv2.medianBlur(mask_solida, 3)
     # cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
 
 
@@ -59,7 +59,7 @@ def pipeline_blackhat(args):
 
     # Melhoria
     # fator_area = args.zoom ** 2
-    fator_area = 1.2 ** 2
+    fator_area = 1.5 ** 2
     area_min = int(CONFIG_VALES['area_min'] * fator_area)
     area_max = int(CONFIG_VALES['area_max'] * fator_area)
     raio_corte = int(CONFIG_VALES['distancia_corte'] * args.zoom) # Distância é linear
@@ -329,6 +329,9 @@ def extrair_e_contar(img, rect_pedra):
     metade_cima = warped[0:40, 0:40]
     metade_baixo = warped[40:80, 0:40]
 
+    # cv2.imshow("0 -- Meio pedra", warped)
+    # cv2.waitKey()
+
     def contar_bolinhas(metade):
         # gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
         # thresh = cv2.adaptiveThreshold(metade, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
@@ -359,7 +362,7 @@ def extrair_e_contar(img, rect_pedra):
         for c in contornos:
             area = cv2.contourArea(c)
             circularidade = 0.0
-            if point_area * 0.6 < area < point_area * 2.1:
+            if point_area * 0.4 < area < point_area * 2.1:
                 perimetro = cv2.arcLength(c, True)
                 if perimetro == 0:
                     continue
@@ -393,7 +396,8 @@ def detectar_vales_por_morfologia(mask_solida):
     # 2. Subtração (O Pulo do Gato)
     mask_vales = cv2.subtract(mask_fechada, mask_solida)
     if args.debug:
-        cv2.imshow("3 - Mask Vales", mask_vales) # Descomente se precisar debugar
+        cv2.imshow("1 - Mask Solida", mask_solida) # Descomente se precisar debugar
+        cv2.imshow("1 - Mask Vales", mask_vales) # Descomente se precisar debugar
 
     # 3. Extrair os Pontos
     cnts_vales, _ = cv2.findContours(mask_vales, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
