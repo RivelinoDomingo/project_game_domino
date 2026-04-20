@@ -12,8 +12,8 @@ app = Flask(__name__)
 
 # Configurações otimizadas
 # device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
-# device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
-device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
+device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
+# device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 0.0
 ultima_leitura_pedras = []
@@ -29,17 +29,16 @@ resetMaoPlayers = False
 tirar_foto_debug = False
 maos_jogadores = {'p1': [], 'p2': [], 'p3': [], 'p4': []}
 Zerou_mao = False
-estado_intervalo = False
-CP_INTERVALO_SEGUNDOS = 0
 duplicada = None
 zoom_reset = False
 zoom_change = False
 modoAuto = False
 
 debug_mode = True
+start = True
 
 # Cache para frames para evitar processamento repetido
-frame_buffer = deque(maxlen=2)
+frame_buffer = deque(maxlen=5)
 ultimo_frame_valido = None
 falhas_consecutivas = 0
 MAX_FALHAS = 10
@@ -60,10 +59,10 @@ CONFIG_VALES = {
     'distancia_mov': 15,
     'distancia_corte': 62,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 2000,                # Area maxima das pedras
+    'area_max': 2500,                # Area maxima das pedras
     'area_min': 500,
     'area_ponto': 30,
-    'distancia_conexao': 120,
+    'distancia_conexao': 200,
 }
 
 
@@ -105,7 +104,7 @@ def extrair_e_contar(img, rect_pedra):
         area = 0.0
         for c in contornos:
             area += cv2.contourArea(c)
-            if area >= 41:
+            if area >= 19:
                 zero_local = True
                 break
 
@@ -418,12 +417,14 @@ def loop_da_camera():
 def processar_frame(img, tempo_atual, args):
     """Processa o frame de forma otimizada"""
     global ultima_leitura_pedras, ultimo_frame_processado, duplicada
-    global resetMaoPlayers, maos_jogadores
+    global resetMaoPlayers, maos_jogadores, start
     global modo_leitura, tirar_foto_debug, enviar_video, zoom_factor
 
     ## Variaveis
     debug_mode = args.debug
-    zoom_factor = args.zoom
+    if start:
+        zoom_factor = args.zoom
+        start = False
 
     # Rotaciona a imagem para ficar mais adequando à mesa
     img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
@@ -441,23 +442,16 @@ def processar_frame(img, tempo_atual, args):
             maos_jogadores[player] = []
 
     # Configura intervalos dinâmicos
-    global DISTANCIA_MINIMA, INTERVALO_SEGUNDOS, CP_INTERVALO_SEGUNDOS
-    global estado_intervalo, Zerou_mao, modoAuto
+    global Zerou_mao, modoAuto, DISTANCIA_MINIMA
 
     if modo_leitura != 'mesa':
         DISTANCIA_MINIMA = 25
-        if not estado_intervalo:
-            CP_INTERVALO_SEGUNDOS = INTERVALO_SEGUNDOS
-            INTERVALO_SEGUNDOS = 0.4
-            estado_intervalo = True
+
         if not Zerou_mao:
             maos_jogadores[modo_leitura] = []
             Zerou_mao = True
     else:
         DISTANCIA_MINIMA = 37
-        if estado_intervalo:
-            INTERVALO_SEGUNDOS = CP_INTERVALO_SEGUNDOS
-            estado_intervalo = False
         Zerou_mao = False
 
     # Foto debug
@@ -581,7 +575,7 @@ def processar_frame(img, tempo_atual, args):
             center, size, angle = rect
             w_box, h_box = size
 
-            if area_max > area > area_max * 0.3:
+            if area_max > area > area_min * 0.7:
 
                 if w_box == 0 or h_box == 0:
                     # print("Box com dimensões zeradas")

@@ -22,7 +22,7 @@ CONFIG_VALES = {
     'distancia_corte': 62,
     'distancia_conexao': 600,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 2000,                # Area maxima das pedras
+    'area_max': 2500,                # Area maxima das pedras
     'area_min': 500,
     'area_ponto': 30,
 }
@@ -48,9 +48,9 @@ def pipeline_blackhat(args):
     cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
 
     # mask_branca = cv2.medianBlur(mask_branca, 3)
-    # cv2.imshow("1 - Mask Branca", mask_branca)
+    # cv2.imshow("1 - Mask Branca 120", mask_branca)
     # mask_solida = cv2.medianBlur(mask_solida, 3)
-    # cv2.imshow("1 - Mask Solida Com Blur", mask_solida)
+    # cv2.imshow("1 - Mask Branca 190", mask_branca_1)
 
 
     # Refinamento de Contornos
@@ -140,7 +140,7 @@ def pipeline_blackhat(args):
         area = cv2.contourArea(cnt)
         # if area < 10 or area > 2200:
         #     continue
-        if area_max > area > area_max * 0.3:
+        if area_max > area > area_min * 0.7:
             rect = cv2.minAreaRect(cnt)
             center, size, angle = rect
             w_box, h_box = size
@@ -322,7 +322,7 @@ def extrair_e_contar(img, rect_pedra):
         area = 0.0
         for c in contornos:
             area += cv2.contourArea(c)
-            if area >= 21:
+            if area >= 19:
                 zero_local = True
                 break
 
