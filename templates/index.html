@@ -501,7 +501,7 @@
                 fetch('/api/action_exec', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'reset' })
+                    body: JSON.stringify({ reset: 'True' })
                 });
             }
         });
@@ -547,6 +547,42 @@
             padrao.forEach(temBolinha => { html += `<div class="ponto ${temBolinha ? '' : 'vazio'}"></div>`; });
             return html;
         }
+
+        // Pega o zoom do application
+
+        async function get_zoomApp(){
+            try {
+                        // Faz apenas UMA chamada, para pegar o valor de zoom
+                        const resposta = await fetch('/api/action_exec', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ get_zoom: 'True' })
+                        });
+
+                        const actions_result = await resposta.json();
+                        // console.log('Resposta completa:', actions_result);
+                        // console.log('Zoom atual:', actions_result.zoom);
+
+                        // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
+                        if (actions_result.zoom !== undefined) {
+                            const zoomSlider = document.getElementById('zoomSlider');
+                            const zoomValor = document.getElementById('zoomValor');
+
+                            // Atualiza o valor do slider
+                            zoomSlider.value = actions_result.zoom.toFixed(3);
+
+                            // Atualiza o texto exibido
+                            zoomValor.innerText = actions_result.zoom.toFixed(3);
+
+                            // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
+                        }
+
+                    } catch (error) {
+                        console.error('Erro:', error);
+                        alert('Erro ao calibrar zoom: ' + error.message);
+                    }
+        }
+        document.addEventListener('DOMContentLoaded', get_zoomApp);
 
         // ==========================================
         // LÓGICA DE RENDERIZAÇÃO
@@ -943,40 +979,6 @@
                 if(dados.modo_atual !== modoAtualAnterior) {
                     atualizarBotoesScan(dados.modo_atual);
                     modoAtualAnterior = dados.modo_atual;
-                }
-
-                if (dados.zoom_state !== null || start) {
-                    start = false;
-                    try {
-                        // Faz apenas UMA chamada, enviando o comando 'calibrar'
-                        const resposta = await fetch('/api/action_exec', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action2: 'valor_zoom' })
-                        });
-
-                        const actions_result = await resposta.json();
-                        // console.log('Resposta completa:', actions_result);
-                        // console.log('Zoom atual:', actions_result.zoom);
-
-                        // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
-                        if (actions_result.zoom !== undefined) {
-                            const zoomSlider = document.getElementById('zoomSlider');
-                            const zoomValor = document.getElementById('zoomValor');
-
-                            // Atualiza o valor do slider
-                            zoomSlider.value = actions_result.zoom.toFixed(3);
-
-                            // Atualiza o texto exibido
-                            zoomValor.innerText = actions_result.zoom.toFixed(3);
-
-                            // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
-                        }
-
-                    } catch (error) {
-                        console.error('Erro:', error);
-                        alert('Erro ao calibrar zoom: ' + error.message);
-                    }
                 }
 
             } catch (error) {

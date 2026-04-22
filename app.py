@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request, Response
+from flask import Flask, jsonify, render_template, request, Response, send_file
 import cv2
 import numpy as np
 import math
@@ -24,15 +24,13 @@ executando_servidor = True
 enviar_video = True
 DISTANCIA_MINIMA = 37
 modo_leitura = 'mesa'
-actions = {'action': 'none', 'action1': 'none', 'action2': 'none'}
+actions = {'rst': 'False', 'zoom': '0.0'}
 resetMaoPlayers = False
 tirar_foto_debug = False
 maos_jogadores = {'p1': [], 'p2': [], 'p3': [], 'p4': []}
 Zerou_mao = False
 duplicada = None
 zoom_reset = False
-zoom_change = False
-modoAuto = False
 
 debug_mode = True
 start = True
@@ -442,7 +440,7 @@ def processar_frame(img, tempo_atual, args):
             maos_jogadores[player] = []
 
     # Configura intervalos dinâmicos
-    global Zerou_mao, modoAuto, DISTANCIA_MINIMA
+    global Zerou_mao, DISTANCIA_MINIMA
 
     if modo_leitura != 'mesa':
         DISTANCIA_MINIMA = 25
@@ -558,8 +556,6 @@ def processar_frame(img, tempo_atual, args):
             if contours_final:
                 cnt_finais = contours_final
             # print("⚠️ Poucos vales detectados ou nenhum contorno encontrado!")
-
-        global actions, zoom_change, automatic_zoom, zoom_prev
 
         candidatos = []
         rejeitados = []
@@ -756,7 +752,6 @@ def processar_frame(img, tempo_atual, args):
         # =================================================================
         if enviar_video:
             out = img.copy()
-
             # Usamos a lista_final (que já tem o ângulo e o valor corrigidos para a Web)
             # ou a pedras_aprovadas (que tem as caixas retangulares cruas do OpenCV).
             # Como você quer desenhar o rect_pedra, vamos usar o pedras_aprovadas original daquele frame.
@@ -1023,7 +1018,7 @@ atexit.register(liberar_recursos)
 # ====================================================================
 
 def gerar_frames():
-    global ultimo_frame_processado
+    global ultimo_frame_processado, INTERVALO_SEGUNDOS
     while True:
         if ultimo_frame_processado is not None:
             yield (b'--frame\r\n'
@@ -1031,10 +1026,10 @@ def gerar_frames():
 
             # ATENÇÃO AQUI: Forçar o streaming a rodar a ~10 FPS
             # Sem isso, ele tenta mandar frames na velocidade da luz e trava o PC!
-            time.sleep(0.1)
+            time.sleep(INTERVALO_SEGUNDOS)
         else:
             # Se ainda não houver foto, espera 0.1s e tenta de novo
-            time.sleep(0.1)
+            time.sleep(INTERVALO_SEGUNDOS)
 
 @app.route('/video_feed')
 def video_feed():
@@ -1065,6 +1060,10 @@ def atualizar_config():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/favicon.ico')
+def icon():
+    return send_file('favicon.ico', mimetype='image/x-icon')
 
 @app.route('/api/zoom', methods=['POST'])
 def atualizar_zoom():
@@ -1099,38 +1098,31 @@ def set_modo():
 
 @app.route('/api/action_exec', methods=['POST'])
 def action_exec():
-    global actions, resetMaoPlayers, modoAuto, zoom_factor
+    global actions, resetMaoPlayers, zoom_factor
     dados = request.get_json()
-    actions['action'] = dados.get('action')
-    actions['action1'] = dados.get('action1')
-    actions['action2'] = dados.get('action2')
+    actions['rst'] = dados.get('reset')
+    actions['zoom'] = dados.get('get_zoom')
 
     # Se fomos ler a mão de alguém, armamos o gatilho da foto!
-    if actions['action'] == 'reset':
+    print(f"Valor do POST reset: {actions['rst']}  --  Valor de zoom: {actions['zoom']}")
+
+    if actions['rst']:
         resetMaoPlayers = True
 
-    if actions['action1'] == 'calibrar':
-        modoAuto = True
-
-    if actions['action2'] == 'valor_zoom':
+    if actions['zoom']:
         return jsonify({"zoom": zoom_factor})
 
     return jsonify({"status": "sucesso"})
 
 @app.route('/api/estado_jogo')
 def estado_jogo():
-    global duplicada, zoom_change
+    global duplicada
     # Esta rota envia TUDO (mesa e jogadores) para o HTML desenhar de uma vez só
-    zoom_state = None
-    if zoom_change:
-        zoom_state = 'zoom_change'
-        zoom_change = False
     return jsonify({
         "modo_atual": modo_leitura,
         "mesa": ultima_leitura_pedras,
         "jogadores": maos_jogadores,
-        "duplicada": duplicada,
-        "zoom_state": zoom_state
+        "duplicada": duplicada
     })
 
 if __name__ == '__main__':
