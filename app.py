@@ -36,7 +36,7 @@ debug_mode = True
 start = True
 
 # Cache para frames para evitar processamento repetido
-frame_buffer = deque(maxlen=5)
+frame_buffer = deque(maxlen=1)
 ultimo_frame_valido = None
 falhas_consecutivas = 0
 MAX_FALHAS = 10
@@ -52,14 +52,14 @@ def parse_arguments():
     parser.add_argument('-d', '--debug', action='store_true', help='Ativa modo depuração')
     return parser.parse_args()
 
-CONFIG_VALES = {
+CONFIGS = {
     'distancia_filtro': 20,
     'distancia_mov': 15,
     'distancia_corte': 62,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 2500,                # Area maxima das pedras
+    'area_max': 1600,                # Area maxima das pedras
     'area_min': 500,
-    'area_ponto': 30,
+    'area_ponto': 35,
     'distancia_conexao': 200,
 }
 
@@ -95,63 +95,44 @@ def extrair_e_contar(img, rect_pedra):
     M = cv2.getPerspectiveTransform(pts, dst)
     warped = cv2.warpPerspective(img, M, (40, 80))
 
-    contornos, _ = cv2.findContours(warped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    warped = cv2.medianBlur(warped, 3)
+    _, thresh = cv2.threshold(warped, 160, 255, cv2.THRESH_BINARY)
 
+    contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     zero_local = False
     if contornos:
         area = 0.0
         for c in contornos:
             area += cv2.contourArea(c)
-            if area >= 19:
+            if area >= CONFIGS['area_ponto']:
                 zero_local = True
                 break
 
 
-    metade_cima = warped[0:40, 0:40]
-    metade_baixo = warped[40:80, 0:40]
+    metade_cima = thresh[0:40, 0:40]
+    metade_baixo = thresh[40:80, 0:40]
 
     def contar_bolinhas(metade):
-        # gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
-        # thresh = cv2.adaptiveThreshold(metade, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        _, thresh = cv2.threshold(metade, 250, 255, cv2.THRESH_BINARY)
-
-        # h, w = thresh.shape
-        # cv2.rectangle(thresh, (0, 0), (w, h), 0, 3)
-
-        # kernel = np.ones((2, 2), np.uint8)
-        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-
-        # cv2.imshow("0 -- Meio pedra", thresh)
-        # cv2.waitKey()
-
-        contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # zero_local = False
-        # if contornos:
-        #     maior_cnt = cv2.contourArea(max(contornos, key=cv2.contourArea))
-        #     # CORREÇÃO: Usando o zoom ao quadrado
-        #     if maior_cnt >= 15:
-        #         zero_local = True
+        contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         pontos = 0
         # CORREÇÃO: Usando o zoom ao quadrado
-        point_area = CONFIG_VALES['area_ponto']
+        point_area = CONFIGS['area_ponto']
 
         for c in contornos:
             area = cv2.contourArea(c)
             circularidade = 0.0
-            if point_area * 0.4 < area < point_area * 2.1:
+            if point_area * 0.6 < area < point_area * 2.1:
                 perimetro = cv2.arcLength(c, True)
                 if perimetro == 0:
                     continue
                 circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-                if circularidade >= 0.5:
+                if circularidade >= 0.7:
                     pontos += 1
-            # print(f"Valor de Área={area}, Circularidade={circularidade}")
 
         return min(pontos, 6)
 
-    pts_cima = contar_bolinhas(metade_cima)
+    pts_cima  = contar_bolinhas(metade_cima)
     pts_baixo = contar_bolinhas(metade_baixo)
 
     return pts_cima, pts_baixo, zero_local
@@ -262,35 +243,33 @@ def nova_pedra(mask_filtrada, area_max_2, cord):
 
     # PROTEÇÃO: Se não achou nenhum contorno na tela, aborta a função sem quebrar
     if not contours_1:
-        return False, 0, (0, 0)
+        return False, 0, (0, 0), 0.0
 
-    # CORREÇÃO: Pega o maior contorno baseado na Área, não no array
     maior_cnt = max(contours_1, key=cv2.contourArea)
     area_max_1 = cv2.contourArea(maior_cnt)
 
-    # CORREÇÃO: Limite de área já com zoom fatorado (conforme discutimos na outra interação)
     fator_area = zoom_factor ** 2
-    area_test = CONFIG_VALES['area_min'] * fator_area
+    area_test = CONFIGS['area_min'] * fator_area
 
     # minAreaRect retorna (centro(x,y), tamanho(w,h), angulo)
     new_cord, _, _ = cv2.minAreaRect(maior_cnt)
 
-    mov_limite = CONFIG_VALES['distancia_mov'] * zoom_factor
+    mov_limite = CONFIGS['distancia_mov'] * zoom_factor
 
     if not area_max_1 or not area_max_2:
-        return False, 0, (0, 0) # CORREÇÃO: removido o tuple(0, 0)
+        return False, 0, (0, 0), 0.0 # CORREÇÃO: removido o tuple(0, 0)
 
     # Checa alteração brusca de área (Pedra entrou ou saiu da mesa)
     if area_max_1 > (area_max_2 + area_test) or area_max_1 < (area_max_2 - area_test):
-        return True, area_max_1, new_cord
+        return True, area_max_1, new_cord, time.time()
 
     # CORREÇÃO: Checa movimentação real usando distância euclidiana (absoluta em todas as direções)
     distancia_percorrida = math.hypot(new_cord[0] - cord[0], new_cord[1] - cord[1])
 
     if distancia_percorrida > mov_limite:
-        return True, area_max_1, new_cord
+        return True, area_max_1, new_cord, time.time()
 
-    return False, area_max_1, new_cord
+    return False, area_max_1, new_cord, 0.0
 
 # Inicializa câmera
 camera = None
@@ -406,7 +385,7 @@ def loop_da_camera():
                     tempo_ultimo_frame = time.time()
             else:
                 # Pequena pausa para não consumir CPU
-                time.sleep(0.05)
+                time.sleep(0.1)
 
         except Exception as e:
             print(f"Erro no loop principal: {e}")
@@ -481,25 +460,27 @@ def processar_frame(img, tempo_atual, args):
     global encontrar_pares_corte, cortar_nos_vales_inteligente
 
     # print(f"Valor de Coordenadas do contorno: {cord_cont}")
+    # out = img.copy()
+    out = None
 
     processar = False
     if not conf_busca:
-        processar, area_base, cord_cont = nova_pedra(mask_solida, CONFIG_VALES['area_min'], cord_cont)
+        processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, CONFIGS['area_min'], cord_cont)
         conf_busca = True
     else:
-        processar, area_base, cord_cont = nova_pedra(mask_solida, area_base, cord_cont)
+        processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
     # print(f"Valor de Coordenadas do contorno de averiguação: {cord_cont}")
-    processar = True
-    if processar:
+    # processar = True
+    if processar or time.time() - time_exec <= 1.5:
         # Refinamento de Contornos
         cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         mask_filtrada = np.zeros_like(gray)
 
         # Melhoria
         fator_area = zoom_factor ** 2
-        area_min = int(CONFIG_VALES['area_min'] * fator_area)
-        area_max = int(CONFIG_VALES['area_max'] * fator_area)
-        raio_corte = int(CONFIG_VALES['distancia_corte'] * zoom_factor) # Distância é linear
+        area_min = int(CONFIGS['area_min'] * fator_area)
+        area_max = int(CONFIGS['area_max'] * fator_area)
+        raio_corte = int(CONFIGS['distancia_corte'] * zoom_factor) # Distância é linear
 
         for c in cnts_pre:
             if cv2.contourArea(c) > area_min:
@@ -511,7 +492,13 @@ def processar_frame(img, tempo_atual, args):
         # Se preferir ver onde os pontos foram removidos:
         mask_pontos = cv2.bitwise_xor(mask_filtrada, mask_branca)
 
-        pontos_vale = detectar_vales_por_morfologia(mask_filtrada)
+        pontos_vale, vales_points = detectar_vales_por_morfologia(mask_filtrada)
+
+        if debug_mode:
+            # Converte binário para BGR (3 canais)
+            # out = cv2.cvtColor(vales_points, cv2.COLOR_GRAY2BGR)
+        # else:
+            out = img.copy()
 
         kernel_derreter = np.ones((7, 7), np.uint8)
         mask_corte = cv2.erode(mask_filtrada, kernel_derreter, iterations=3)
@@ -528,14 +515,14 @@ def processar_frame(img, tempo_atual, args):
             #     cv2.imshow("2 - Mask Usada", mask_filtrada)
 
             pares_corte = encontrar_pares_corte(pontos_vale, mask_filtrada, raio_corte)
-            cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, pares_corte)
+            cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, out, pontos_vale, pares_corte)
             max_contorno = max(cnt_finais, key=cv2.contourArea)
-            min_contorno = min(cnt_finais, key=cv2.contourArea)
+            # min_contorno = min(cnt_finais, key=cv2.contourArea)
             max_contorno = cv2.contourArea(max_contorno)
-            min_contorno = cv2.contourArea(min_contorno)
+            # min_contorno = cv2.contourArea(min_contorno)
             # print(f"Maior contorno: {max_contorno}  -- Menor: {min_contorno}")
 
-            if max_contorno > area_max * 1.8:
+            if max_contorno > area_max * 3:
                 # print("Recalculando com mascara reduzinda!")
                 # print(f"Área max. permitida: {area_max * 1.8}  --  Área min: {area_min}")
                 # print(f"Área do maior Contorno: {max_contorno}  --  Menor contorno: {min_contorno}")
@@ -545,7 +532,7 @@ def processar_frame(img, tempo_atual, args):
                 # cv2.drawContours(mask_corte, [contorno_corte], -1, 255, -1)
 
                 pares_corte = encontrar_pares_corte(pontos_vale, mask_corte, raio_corte)
-                cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pontos_vale, pares_corte)
+                cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, out, pontos_vale, pares_corte)
                 # if args.debug:
                 #     cv2.imshow("2 - Mask Corte Usada", mask_corte)
 
@@ -572,7 +559,6 @@ def processar_frame(img, tempo_atual, args):
             w_box, h_box = size
 
             if area_max > area > area_min * 0.7:
-
                 if w_box == 0 or h_box == 0:
                     # print("Box com dimensões zeradas")
                     reject = True
@@ -605,10 +591,8 @@ def processar_frame(img, tempo_atual, args):
                     'area': area,
                     'ratio': ratio,
                 })
-            else:
-                reject = True
 
-            if debug_mode and reject:
+            if debug_mode and reject and area > area_min:
                 rejeitados.append({
                     'centro': center,
                     'area': area,
@@ -636,7 +620,7 @@ def processar_frame(img, tempo_atual, args):
 
 
         # Configuração de bando
-        DISTANCIA_CONEXAO = CONFIG_VALES['distancia_conexao'] * zoom_factor
+        DISTANCIA_CONEXAO = CONFIGS['distancia_conexao'] * zoom_factor
         agrupamento = True
         pedras_aprovadas = []
 
@@ -734,6 +718,7 @@ def processar_frame(img, tempo_atual, args):
                 })
             else:
                 # Imprime rejeições apenas nas mãos para não poluir o terminal da mesa
+                rejeitados.append(d)
                 if modo_leitura != 'mesa':
                     print(f"🚫 Duplicata rejeitada: {valor_pedra}")
                     continue
@@ -751,11 +736,15 @@ def processar_frame(img, tempo_atual, args):
         # --- PREPARA FRAME PARA STREAMING (WEBCAM/VIDEO) ---
         # =================================================================
         if enviar_video:
-            out = img.copy()
             # Usamos a lista_final (que já tem o ângulo e o valor corrigidos para a Web)
             # ou a pedras_aprovadas (que tem as caixas retangulares cruas do OpenCV).
             # Como você quer desenhar o rect_pedra, vamos usar o pedras_aprovadas original daquele frame.
-            if debug_mode:
+
+            cv2.putText(out, f"Area maxima: {area_max}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Area minima: {area_min}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Ratio MAX: 2.4    Ratio MIN: 1.5", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+            if debug_mode and len(rejeitados) > 0:
                 for p in rejeitados:
                     try:
                         area = p['area']
@@ -763,9 +752,6 @@ def processar_frame(img, tempo_atual, args):
                         # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
                         cx, cy = map(int, p['centro'])
                         cv2.circle(out, (cx, cy), 7, 0, 2)
-                        cv2.putText(out, f"Area maxima: {area_max}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                        cv2.putText(out, f"Area minima: {area_min}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-
                         cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
                         cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
                         cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
@@ -787,12 +773,18 @@ def processar_frame(img, tempo_atual, args):
 
                     # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
                     cx, cy = map(int, p['centro'])
+                    area = p['area']
+                    ratio = p['ratio']
                     # Como tiramos o valor de pedras_aprovadas, precisamos pegar da leitura.
                     # Se você preferir não ler o valor aqui para poupar CPU, basta remover as linhas abaixo.
                     pts_cima, pts_baixo, zero = extrair_e_contar(mask_pontos, p['rect_pedra'])
 
                     if not zero and f"{pts_cima}|{pts_baixo}" == "0|0":
                         continue
+                    cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                    cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                    cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
                     cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                     cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
@@ -818,7 +810,7 @@ def detectar_vales_por_morfologia(mask_solida):
     para isolar os vales.
     """
     # 1. 'Massa Corrida' (Fechamento)
-    k_size = CONFIG_VALES['tamanho_kernel_morfologia']
+    k_size = CONFIGS['tamanho_kernel_morfologia']
     kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
 
     mask_fechada = cv2.morphologyEx(mask_solida, cv2.MORPH_CLOSE, kernel_fechamento)
@@ -838,7 +830,7 @@ def detectar_vales_por_morfologia(mask_solida):
         # Correção: passar como uma tupla contendo a coordenada e a área
         pontos_encontrados.append(([cx, cy], area))
 
-    return agrupar_pontos_proximos(pontos_encontrados, int(CONFIG_VALES['distancia_filtro'] * zoom_factor))
+    return agrupar_pontos_proximos(pontos_encontrados, int(CONFIGS['distancia_filtro'] * zoom_factor)), mask_vales
 
 def agrupar_pontos_proximos(dados_pontos, raio=5):
     """
@@ -973,7 +965,7 @@ def encontrar_pares_corte(pontos_vale, mask_pedras, raio_max=69):
 
     return pares_finais
 
-def cortar_nos_vales_inteligente(mask_pedra_solida, pontos_vale, pares_corte):
+def cortar_nos_vales_inteligente(mask_pedra_solida, img_debug, pontos_vale, pares_corte):
     """
     Aplica as linhas de corte geradas pelo algoritmo otimizado.
     """
@@ -985,8 +977,11 @@ def cortar_nos_vales_inteligente(mask_pedra_solida, pontos_vale, pares_corte):
 
     for p1, p2, _ in pares_corte:
         cv2.line(mask_cortada, p1, p2, 0, thickness=2)
-        cv2.circle(mask_cortada, p1, 2, 0, -1)
-        cv2.circle(mask_cortada, p2, 2, 0, -1)
+        cv2.circle(mask_cortada, p1, 3, 0, -1)
+        cv2.circle(mask_cortada, p2, 3, 0, -1)
+        if debug_mode:
+            cv2.circle(img_debug, p1, 4, (1,1,255), 1)
+            cv2.circle(img_debug, p2, 4, (1,1,255), 1)
 
     contours_apos, _ = cv2.findContours(mask_cortada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1018,7 +1013,7 @@ atexit.register(liberar_recursos)
 # ====================================================================
 
 def gerar_frames():
-    global ultimo_frame_processado, INTERVALO_SEGUNDOS
+    global ultimo_frame_processado
     while True:
         if ultimo_frame_processado is not None:
             yield (b'--frame\r\n'
@@ -1026,10 +1021,10 @@ def gerar_frames():
 
             # ATENÇÃO AQUI: Forçar o streaming a rodar a ~10 FPS
             # Sem isso, ele tenta mandar frames na velocidade da luz e trava o PC!
-            time.sleep(INTERVALO_SEGUNDOS)
+            time.sleep(0.1)
         else:
             # Se ainda não houver foto, espera 0.1s e tenta de novo
-            time.sleep(INTERVALO_SEGUNDOS)
+            time.sleep(0.1)
 
 @app.route('/video_feed')
 def video_feed():

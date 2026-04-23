@@ -17,14 +17,14 @@ def parse_arguments():
     return parser.parse_args()
 
 
-CONFIG_VALES = {
+CONFIGS = {
     'distancia_filtro': 20,
     'distancia_corte': 62,
     'distancia_conexao': 600,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 2500,                # Area maxima das pedras
+    'area_max': 1600,                # Area maxima das pedras
     'area_min': 500,
-    'area_ponto': 30,
+    'area_ponto': 35,
 }
 
 
@@ -59,10 +59,10 @@ def pipeline_blackhat(args):
 
     # Melhoria
     # fator_area = args.zoom ** 2
-    fator_area = 1.5 ** 2
-    area_min = int(CONFIG_VALES['area_min'] * fator_area)
-    area_max = int(CONFIG_VALES['area_max'] * fator_area)
-    raio_corte = int(CONFIG_VALES['distancia_corte'] * args.zoom) # Distância é linear
+    fator_area = 1.4 ** 2
+    area_min = int(CONFIGS['area_min'] * fator_area)
+    area_max = int(CONFIGS['area_max'] * fator_area)
+    raio_corte = int(CONFIGS['distancia_corte'] * args.zoom) # Distância é linear
 
     for c in cnts_pre:
         if cv2.contourArea(c) > area_min:
@@ -104,7 +104,7 @@ def pipeline_blackhat(args):
         max_contorno = cv2.contourArea(max_contorno)
         # print(f"Maior contorno: {max_contorno}  -- Menor: {min_contorno}")
 
-        if max_contorno > area_max * 2.8:
+        if max_contorno > area_max * 3:
             print("Recalculando com mascara reduzinda!")
             print(f"Área max. permitida: {area_max * 1.8}")
             print(f"Área do maior Contorno: {max_contorno}")
@@ -202,7 +202,7 @@ def pipeline_blackhat(args):
     # ==========================================
     # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
     # ==========================================
-    DISTANCIA_CONEXAO = CONFIG_VALES['distancia_conexao'] * args.zoom  # Tamanho da "Área de influência" de cada pedra
+    DISTANCIA_CONEXAO = CONFIGS['distancia_conexao'] * args.zoom  # Tamanho da "Área de influência" de cada pedra
 
     visitados = set()
     todos_os_bandos = []
@@ -315,19 +315,24 @@ def extrair_e_contar(img, rect_pedra):
     M = cv2.getPerspectiveTransform(pts, dst)
     warped = cv2.warpPerspective(img, M, (40, 80))
 
-    contornos, _ = cv2.findContours(warped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    warped = cv2.medianBlur(warped, 3)
+    _, thresh = cv2.threshold(warped, 160, 255, cv2.THRESH_BINARY)
+    # kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
+    # warped = cv2.morphologyEx(warped, cv2.MORPH_CLOSE, kernel_fechamento)
 
+    contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     zero_local = False
     if contornos:
         area = 0.0
         for c in contornos:
             area += cv2.contourArea(c)
-            if area >= 19:
+            if area >= CONFIGS['area_ponto']:
                 zero_local = True
                 break
 
-    metade_cima = warped[0:40, 0:40]
-    metade_baixo = warped[40:80, 0:40]
+
+    metade_cima = thresh[0:40, 0:40]
+    metade_baixo = thresh[40:80, 0:40]
 
     # cv2.imshow("0 -- Meio pedra", warped)
     # cv2.waitKey()
@@ -335,47 +340,39 @@ def extrair_e_contar(img, rect_pedra):
     def contar_bolinhas(metade):
         # gray = cv2.cvtColor(metade, cv2.COLOR_BGR2GRAY)
         # thresh = cv2.adaptiveThreshold(metade, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        _, thresh = cv2.threshold(metade, 250, 255, cv2.THRESH_BINARY)
 
         # h, w = thresh.shape
         # cv2.rectangle(thresh, (0, 0), (w, h), 0, 3)
 
         # kernel = np.ones((2, 2), np.uint8)
-        kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_fechamento)
+        # kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_fechamento)
         # thresh = cv2.medianBlur(thresh, 7)
 
-        cv2.imshow("0 -- Meio pedra", thresh)
-        cv2.waitKey()
+        # cv2.imshow("0 -- Meio pedra", thresh)
+        # cv2.waitKey()
 
-        contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # zero_local = False
-        # if contornos:
-        #     maior_cnt = cv2.contourArea(max(contornos, key=cv2.contourArea))
-        #     # CORREÇÃO: Usando o zoom ao quadrado
-        #     if maior_cnt >= 15:
-        #         zero_local = True
+        contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         pontos = 0
         # CORREÇÃO: Usando o zoom ao quadrado
-        point_area = CONFIG_VALES['area_ponto']
+        point_area = CONFIGS['area_ponto']
 
         for c in contornos:
             area = cv2.contourArea(c)
             circularidade = 0.0
-            if point_area * 0.4 < area < point_area * 2.1:
+            if point_area * 0.6 < area < point_area * 2.1:
                 perimetro = cv2.arcLength(c, True)
                 if perimetro == 0:
                     continue
                 circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-                if circularidade >= 0.5:
+                if circularidade >= 0.7:
                     pontos += 1
-            print(f"Valor de Área={area}, Circularidade={circularidade}")
+            # print(f"Valor de Área={area}, Circularidade={circularidade}")
 
         return min(pontos, 6)
 
-    pts_cima = contar_bolinhas(metade_cima)
+    pts_cima  = contar_bolinhas(metade_cima)
     pts_baixo = contar_bolinhas(metade_baixo)
 
     return pts_cima, pts_baixo, zero_local
@@ -390,7 +387,7 @@ def detectar_vales_por_morfologia(mask_solida):
     para isolar os vales.
     """
     # 1. 'Massa Corrida' (Fechamento)
-    k_size = CONFIG_VALES['tamanho_kernel_morfologia']
+    k_size = CONFIGS['tamanho_kernel_morfologia']
     kernel_fechamento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
 
     mask_fechada = cv2.morphologyEx(mask_solida, cv2.MORPH_CLOSE, kernel_fechamento)
@@ -411,7 +408,7 @@ def detectar_vales_por_morfologia(mask_solida):
         # Correção: passar como uma tupla contendo a coordenada e a área
         pontos_encontrados.append(([cx, cy], area))
 
-    return agrupar_pontos_proximos(pontos_encontrados, int(CONFIG_VALES['distancia_filtro'] * args.zoom))
+    return agrupar_pontos_proximos(pontos_encontrados, int(CONFIGS['distancia_filtro'] * args.zoom))
 
 def agrupar_pontos_proximos(dados_pontos, raio=5):
     """
@@ -596,8 +593,8 @@ def visualizar_cortes(img_original, mask_original, contornos, pares_corte, titul
     contours_antes, _ = cv2.findContours(mask_original, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     fator_area = args.zoom ** 2
-    area_min = int(CONFIG_VALES['area_min'] * fator_area)
-    area_max = int(CONFIG_VALES['area_max'] * fator_area)
+    area_min = int(CONFIGS['area_min'] * fator_area)
+    area_max = int(CONFIGS['area_max'] * fator_area)
 
     for cnt in contornos:
         area = cv2.contourArea(cnt)
@@ -638,7 +635,7 @@ def visualizar_vales_detalhado(img, mask_pedras, pontos_vale, titulo="Vales Dete
     heatmap = np.zeros(mask_pedras.shape, dtype=np.float32)
 
     for ponto in pontos_vale:
-        cv2.circle(heatmap, tuple(ponto), int(CONFIG_VALES['distancia_filtro'] * args.zoom), 1.0, -1)
+        cv2.circle(heatmap, tuple(ponto), int(CONFIGS['distancia_filtro'] * args.zoom), 1.0, -1)
 
     # Normalizar heatmap
     if heatmap.max() > 0:
