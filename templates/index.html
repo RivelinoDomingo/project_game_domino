@@ -105,11 +105,21 @@
             z-index: 1;
         }
 
-        /* JOGADORES (POSICIONAMENTO HUD CRAVADO NAS BORDAS) */
+        /* JOGADORES (POSICIONAMENTO DINÂMICO) */
         .area-jogador {
             position: absolute;
             display: flex;
             z-index: 10;
+            transition: all 0.3s ease;
+        }
+
+        /* Estado padrão - áreas vazias (quase invisíveis, só header) */
+        .area-jogador.vazia {
+            opacity: 0.7;
+        }
+
+        .area-jogador.vazia .container-pedras {
+            display: none !important;
         }
 
         /* P1 (Topo) e P3 (Base) - Horizontais */
@@ -210,6 +220,14 @@
             display: flex; flex-wrap: wrap; gap: 6px;
             padding: 10px; justify-content: center; align-content: center;
             flex: 1; overflow: hidden; /* Impede que cresça e quebre o layout */
+        }
+
+        /* Área da mesa - será reposicionada dinamicamente */
+        #area-mesa {
+            position: absolute !important;
+            z-index: 5 !important;
+            transition: all 0.3s ease;
+            overflow: hidden !important;
         }
 
         /* =========================================
@@ -324,14 +342,10 @@
         BLINDAGEM DA MESA CENTRAL
         ========================================= */
         #pedras-mesa {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
+            position: relative !important;
             width: 100% !important;
             height: 100% !important;
             z-index: 5 !important;
-
-            /* As linhas abaixo forçam a anular o que vem do .container-pedras */
             padding: 0 !important;
             margin: 0 !important;
             display: block !important;
@@ -484,7 +498,6 @@
             fetch('/api/set_modo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modo: 'mesa' }) });
             atualizarBotoesScan('mesa');
 
-            // Opcional: Mostrar feedback visual
             const btn = document.getElementById('btnForcarMesa');
             const textoOriginal = btn.textContent;
             btn.textContent = '✅ Restaurando visão da mesa!';
@@ -494,7 +507,6 @@
         });
 
         document.getElementById('btnResetMao').addEventListener('click', () => {
-        // 2. Pedido de Confirmação
             const confirmacao = confirm(`⚠️ ATENÇÃO: Tem certeza que deseja excluir as mãos dos Jogadores? Isso não poderá ser desfeito!!`);
 
             if (confirmacao) {
@@ -505,29 +517,6 @@
                 });
             }
         });
-
-        // document.getElementById('btnAutoZoom').addEventListener('click', async () => {
-        //     try {
-        //         // Faz apenas UMA chamada, enviando o comando 'calibrar'
-        //         const resposta = await fetch('/api/action_exec', {
-        //             method: 'POST',
-        //             headers: { 'Content-Type': 'application/json' },
-        //             body: JSON.stringify({ action1: 'calibrar' })
-        //         });
-        //
-        //         // Opcional: Mostrar feedback visual
-        //         const btn = document.getElementById('btnAutoZoom');
-        //         const textoOriginal = btn.textContent;
-        //         btn.textContent = '✅ Zoom Calibrado!';
-        //         setTimeout(() => {
-        //             btn.textContent = textoOriginal;
-        //         }, 2000);
-        //
-        //     } catch (error) {
-        //         console.error('Erro:', error);
-        //         alert('Erro ao calibrar zoom: ' + error.message);
-        //     }
-        // });
 
         // ==========================================
         // LÓGICA DO JOGO E BOLINHAS
@@ -548,60 +537,125 @@
             return html;
         }
 
-        // Pega o zoom do application
-
         async function get_zoomApp(){
             try {
-                        // Faz apenas UMA chamada, para pegar o valor de zoom
-                        const resposta = await fetch('/api/action_exec', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ get_zoom: 'True' })
-                        });
+                const resposta = await fetch('/api/action_exec', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ get_zoom: 'True' })
+                });
 
-                        const actions_result = await resposta.json();
-                        // console.log('Resposta completa:', actions_result);
-                        // console.log('Zoom atual:', actions_result.zoom);
+                const actions_result = await resposta.json();
 
-                        // 🔥 DEFINE O VALOR DO ZOOM NO SLIDER 🔥
-                        if (actions_result.zoom !== undefined) {
-                            const zoomSlider = document.getElementById('zoomSlider');
-                            const zoomValor = document.getElementById('zoomValor');
+                if (actions_result.zoom !== undefined) {
+                    const zoomSlider = document.getElementById('zoomSlider');
+                    const zoomValor = document.getElementById('zoomValor');
+                    zoomSlider.value = actions_result.zoom.toFixed(3);
+                    zoomValor.innerText = actions_result.zoom.toFixed(3);
+                }
 
-                            // Atualiza o valor do slider
-                            zoomSlider.value = actions_result.zoom.toFixed(3);
-
-                            // Atualiza o texto exibido
-                            zoomValor.innerText = actions_result.zoom.toFixed(3);
-
-                            // console.log(`Zoom ajustado para: ${actions_result.zoom}x`);
-                        }
-
-                    } catch (error) {
-                        console.error('Erro:', error);
-                        alert('Erro ao calibrar zoom: ' + error.message);
-                    }
+            } catch (error) {
+                console.error('Erro:', error);
+                alert('Erro ao calibrar zoom: ' + error.message);
+            }
         }
         document.addEventListener('DOMContentLoaded', get_zoomApp);
+
+        // ==========================================
+        // SISTEMA DE LAYOUT DINÂMICO
+        // ==========================================
+
+        function recalcularLayout() {
+            const viewportW = window.innerWidth;
+            const viewportH = window.innerHeight;
+
+            const areasComPedras = {
+                p1: document.getElementById('pedras-p1')?.children.length > 0,
+                p2: document.getElementById('pedras-p2')?.children.length > 0,
+                p3: document.getElementById('pedras-p3')?.children.length > 0,
+                p4: document.getElementById('pedras-p4')?.children.length > 0
+            };
+
+            ['p1', 'p2', 'p3', 'p4'].forEach(p => {
+                const area = document.getElementById(`area-${p}`);
+                if (areasComPedras[p]) {
+                    area.classList.remove('vazia');
+                } else {
+                    area.classList.add('vazia');
+                }
+            });
+
+            const HEADER_SIZE = 60;
+
+            const espacoTopo = areasComPedras.p1 ? 160 : HEADER_SIZE;
+            const espacoBaixo = areasComPedras.p3 ? 160 : HEADER_SIZE;
+            const espacoEsquerda = areasComPedras.p4 ? 160 : HEADER_SIZE;
+            const espacoDireita = areasComPedras.p2 ? 160 : HEADER_SIZE;
+
+            const areaP1 = document.getElementById('area-p1');
+            areaP1.style.left = espacoEsquerda + 'px';
+            areaP1.style.right = espacoDireita + 'px';
+            areaP1.style.height = areasComPedras.p1 ? '150px' : '60px';
+            areaP1.style.top = '0';
+
+            const areaP3 = document.getElementById('area-p3');
+            areaP3.style.left = espacoEsquerda + 'px';
+            areaP3.style.right = espacoDireita + 'px';
+            areaP3.style.height = areasComPedras.p3 ? '150px' : '60px';
+            areaP3.style.bottom = '0';
+
+            const areaP4 = document.getElementById('area-p4');
+            areaP4.style.top = espacoTopo + 'px';
+            areaP4.style.bottom = espacoBaixo + 'px';
+            areaP4.style.width = areasComPedras.p4 ? '150px' : '60px';
+            areaP4.style.left = '0';
+
+            const areaP2 = document.getElementById('area-p2');
+            areaP2.style.top = espacoTopo + 'px';
+            areaP2.style.bottom = espacoBaixo + 'px';
+            areaP2.style.width = areasComPedras.p2 ? '150px' : '60px';
+            areaP2.style.right = '0';
+
+            const areaMesa = document.getElementById('area-mesa');
+            areaMesa.style.left = espacoEsquerda + 'px';
+            areaMesa.style.top = espacoTopo + 'px';
+            areaMesa.style.right = espacoDireita + 'px';
+            areaMesa.style.bottom = espacoBaixo + 'px';
+
+            const watermark = document.getElementById('watermark-central');
+            if (watermark) {
+                watermark.style.left = '50%';
+                watermark.style.top = '50%';
+            }
+
+            // console.log('Layout recalculado:', {
+            //     areas: areasComPedras,
+            //     mesa: {
+            //         left: espacoEsquerda,
+            //         top: espacoTopo,
+            //         right: espacoDireita,
+            //         bottom: espacoBaixo
+            //     }
+            // });
+        }
 
         // ==========================================
         // LÓGICA DE RENDERIZAÇÃO
         // ==========================================
 
-        // 1. Renderiza as mãos dos jogadores (Em linha, organizadas)
         function renderizarMaoJogador(listaPedras, containerId, listaMesa) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
 
-            if (!listaPedras || listaPedras.length === 0) return;
+            if (!listaPedras || listaPedras.length === 0) {
+                recalcularLayout();
+                return;
+            }
 
-            // --- A MÁGICA DA VERIFICAÇÃO ---
-            // Cria um catálogo rápido de tudo o que está na mesa
             const pedrasNaMesa = new Set();
             if (listaMesa) {
                 listaMesa.forEach(p => {
                     const partes = p.valor.split('|');
-                    // Guarda as duas versões para não ser enganado pela rotação!
                     pedrasNaMesa.add(`${partes[0]}|${partes[1]}`);
                     pedrasNaMesa.add(`${partes[1]}|${partes[0]}`);
                 });
@@ -609,11 +663,7 @@
 
             listaPedras.forEach(pedraObj => {
                 const partes = pedraObj.valor.split('|');
-
-                // Se a pedra que estamos a desenhar existe no catálogo da mesa...
                 const jaFoiJogada = pedrasNaMesa.has(pedraObj.valor);
-
-                // ...adicionamos a classe vermelha nela!
                 const classeCSS = jaFoiJogada ? 'domino jogada' : 'domino';
 
                 const dominoHtml = `
@@ -625,15 +675,17 @@
                 `;
                 container.innerHTML += dominoHtml;
             });
+
+            recalcularLayout();
         }
 
+        const fatorBase = 1.3;
         function renderizarMesaFisica(listaPedras) {
             const container = document.getElementById('pedras-mesa');
             const watermark = document.getElementById('watermark-central');
             container.innerHTML = '';
 
             if (!listaPedras || listaPedras.length === 0) {
-                // Se a mesa está vazia, revela a animação
                 if(watermark) {
                     watermark.style.opacity = '1';
                     watermark.style.visibility = 'visible';
@@ -641,49 +693,29 @@
                 return;
             }
 
-            // Se as pedras chegaram, esconde a marca d'água inteira com fade-out
             if(watermark) {
                 watermark.style.opacity = '0';
                 watermark.style.visibility = 'hidden';
             }
 
-            container.style.position = 'relative';
-            container.style.height = '500px';
-            container.style.display = 'block';
-            container.style.overflow = 'hidden';
+            const RAIO_VIZINHOS = 65;
 
-            // ========================================================
-            // 🕵️ DETECTOR DE GATOS (Análise de Proximidade Espacial)
-            // ========================================================
-            const RAIO_VIZINHOS = 65; // Distância física em pixels na câmera
-
-            // Passo A: Reseta o status
             listaPedras.forEach(p => p.isGato = false);
 
-            // Função interna mágica: Calcula o X e Y exato de cada lado do dominó
             function obterMetades(p) {
-                // Em OpenCV, do centro da pedra até ao meio de uma metade são ~15 pixels
                 const distDoCentro = 15;
-
-                let angle_usage = -90;
-                if (p.angulo >= 80) {
-                    angle_usage = -90;
-                }else{
-                    angle_usage = 90;
-                }
-
-                const angulo_pedra = p.angulo + angle_usage; // Correção para o angulo da pedra referente a mesa.
-
-                const rad = angulo_pedra * (Math.PI / 180); // Converte ângulo para radianos
+                let angle_usage = p.angulo >= 80 ? -90 : 90;
+                const angulo_pedra = p.angulo + angle_usage;
+                const rad = angulo_pedra * (Math.PI / 180);
                 const valores = p.valor.split('|');
 
                 return [
-                    { // Metade 0 (Metade de Cima/Esquerda)
+                    {
                         v: valores[0],
                         x: p.x + distDoCentro * Math.sin(rad),
                         y: p.y - distDoCentro * Math.cos(rad)
                     },
-                    { // Metade 1 (Metade de Baixo/Direita)
+                    {
                         v: valores[1],
                         x: p.x - distDoCentro * Math.sin(rad),
                         y: p.y + distDoCentro * Math.cos(rad)
@@ -691,15 +723,12 @@
                 ];
             }
 
-            // Passo B: Compara quem está encostado em quem
             for (let i = 0; i < listaPedras.length; i++) {
                 for (let j = i + 1; j < listaPedras.length; j++) {
                     const p1 = listaPedras[i];
                     const p2 = listaPedras[j];
-
                     const distCentro = Math.hypot(p1.x - p2.x, p1.y - p2.y);
 
-                    // Se as pedras estão perto o suficiente para estarem a jogar...
                     if (distCentro <= RAIO_VIZINHOS) {
                         const metades1 = obterMetades(p1);
                         const metades2 = obterMetades(p2);
@@ -708,7 +737,6 @@
                         let valorEncostado1 = null;
                         let valorEncostado2 = null;
 
-                        // Descobre QUAIS das 4 metades estão fisicamente mais próximas
                         for (let m1 of metades1) {
                             for (let m2 of metades2) {
                                 const dist = Math.hypot(m1.x - m2.x, m1.y - m2.y);
@@ -720,21 +748,14 @@
                             }
                         }
 
-                        // Se a distância entre as metades "vizinhas" for coerente com um encaixe (~30px a 38px)
-                        if (menorDistancia <= 38) {
-                            // O JULGAMENTO FINAL: O número físico que está encostado bate?
-                            if (valorEncostado1 !== valorEncostado2) {
-                                p1.isGato = true;
-                                p2.isGato = true;
-                                // console.log(`🚨 GATO DETECTADO! Encostou ${valorEncostado1} no ${valorEncostado2}`);
-                            }
+                        if (menorDistancia <= 38 && valorEncostado1 !== valorEncostado2) {
+                            p1.isGato = true;
+                            p2.isGato = true;
                         }
                     }
                 }
             }
-            // ========================================================
 
-            // 1. Descobre a Borda Extrema do Jogo (Bounding Box)
             let minX = Infinity, minY = Infinity;
             let maxX = -Infinity, maxY = -Infinity;
 
@@ -748,42 +769,31 @@
             const spanX = maxX - minX;
             const spanY = maxY - minY;
 
-            const fatorBase = 1.4;
-            const mesaW = container.clientWidth || 800;
-            const mesaH = container.clientHeight || 500;
+            const containerW = container.clientWidth || 800;
+            const containerH = container.clientHeight || 500;
 
-            const larguraNecessaria = (spanX * fatorBase) + 150;
-            const alturaNecessaria  = (spanY * fatorBase) + 150;
+            const larguraNecessaria = (spanX * fatorBase) + 80;
+            const alturaNecessaria = (spanY * fatorBase) + 80;
 
-            let escalaAuto = Math.min(mesaW / larguraNecessaria, mesaH / alturaNecessaria);
+            let escalaAuto = Math.min(containerW / larguraNecessaria, containerH / alturaNecessaria);
 
             if (escalaAuto > 1.2) escalaAuto = 1.2;
-            if (escalaAuto < 0.2) escalaAuto = 0.2;
+            if (escalaAuto < 0.3) escalaAuto = 0.3;
 
             const fatorFinal = fatorBase * escalaAuto;
-
             const larguraReal = spanX * fatorFinal;
             const alturaReal = spanY * fatorFinal;
 
-            const offsetX = (mesaW - larguraReal) / 2;
-            const offsetY = (mesaH - alturaReal) / 2;
+            const offsetX = (containerW - larguraReal) / 2;
+            const offsetY = (containerH - alturaReal) / 2;
 
-            // 5. Desenhando as pedras
             listaPedras.forEach(pedraObj => {
                 const partes = pedraObj.valor.split('|');
-
                 const posicaoX = (pedraObj.x - minX) * fatorFinal + offsetX;
                 const posicaoY = (pedraObj.y - minY) * fatorFinal + offsetY;
 
-                angle_usage = -90;
-                if (pedraObj.angulo >= 80) {
-                    angle_usage = -90;
-                }else{
-                    angle_usage = 90;
-                }
+                let angle_usage = pedraObj.angulo >= 80 ? -90 : 90;
                 const anguloCSS = pedraObj.angulo + angle_usage;
-
-                // Aqui injetamos a classe 'gato' caso a pedra tenha sido flagrada no radar!
                 const classeExtra = pedraObj.isGato ? ' gato' : '';
 
                 const dominoHtml = `
@@ -831,41 +841,33 @@
         // ==========================================
 
         let timeoutToast = null;
-        let ultimaDuplicata = null;  // Para evitar repetir o mesmo aviso várias vezes
-        // Substitua os setIntervals por requestAnimationFrame para melhor performance
+        let ultimaDuplicata = null;
         let animationId = null;
         let ultimoUpdate = 0;
-        const INTERVALO_FIREBASE = 5000; // 5 segundos
+        const INTERVALO_FIREBASE = 5000;
         let start = true;
 
         function mostrarToast(mensagem) {
             const toast = document.getElementById('toastDuplicata');
             const toastMessage = document.getElementById('toastMessage');
 
-            // Se a mensagem for a mesma da última vez, não mostra de novo (evita spam)
             if (ultimaDuplicata === mensagem) {
                 return;
             }
             ultimaDuplicata = mensagem;
 
-            // Define a mensagem
             toastMessage.textContent = mensagem;
-
-            // Mostra o toast
             toast.classList.add('show');
 
-            // Toca o som de erro
             const somErro = document.getElementById('somErro');
             if (somErro) {
                 somErro.play().catch(e => console.log('Som não pode ser reproduzido'));
             }
 
-            // Remove o timeout anterior se existir
             if (timeoutToast) {
                 clearTimeout(timeoutToast);
             }
 
-            // Auto-esconde após 4 segundos
             timeoutToast = setTimeout(() => {
                 fecharToast();
             }, 4000);
@@ -875,68 +877,98 @@
             const toast = document.getElementById('toastDuplicata');
             toast.classList.remove('show');
             timeoutToast = null;
-            // Reseta a última mensagem após fechar (opcional)
             setTimeout(() => {
                 ultimaDuplicata = null;
             }, 500);
         }
 
         // ==========================================
-        // CONFIGURAÇÕES DO FILTRO ANTI-RUÍDO
+        // CONFIGURAÇÕES DO FILTRO ANTI-RUÍDO (CORRIGIDO)
         // ==========================================
-        const FREQUENCIA_FETCH_MS = 200;  // A página puxa dados a cada 0.5s
-        const JANELA_TEMPO_MS = 5000;     // Avalia uma "memória" de 2.5s
-        const TAMANHO_BUFFER = JANELA_TEMPO_MS / (FREQUENCIA_FETCH_MS + 300); // Resulta em 5 frames
-        const MIN_APARICOES = 5;          // Pedra precisa aparecer em 3 de 5 frames para ser confirmada
+        const FREQUENCIA_FETCH_MS = 300;  // 300ms entre leituras = ~3.3 leituras/segundo
+        const JANELA_TEMPO_SEGUNDOS = 5;  // Janela de 5 segundos
+        const LEITURAS_POR_SEGUNDO = 1000 / FREQUENCIA_FETCH_MS; // ≈ 3.33
+        const TAMANHO_BUFFER = Math.ceil(JANELA_TEMPO_SEGUNDOS * LEITURAS_POR_SEGUNDO); // = 17 frames
+        const MIN_APARICOES = Math.ceil(TAMANHO_BUFFER * 0.6); // 70% de confiança = 12 de 17
 
-        // Buffers para guardar o histórico das últimas 5 leituras
+        // console.log(`📊 Filtro configurado: ${TAMANHO_BUFFER} frames, precisa de ${MIN_APARICOES} aparições (${((MIN_APARICOES/TAMANHO_BUFFER)*100).toFixed(0)}%)`);
+
         let bufferMesa = [];
         let bufferJogadores = { p1: [], p2: [], p3: [], p4: [] };
+        let ultimaListaMesa = [];
+        let contadorFrames = 0; // Para debug
 
         function filtrarPedrasRecorrentes(bufferDePedras) {
+            // Se o buffer ainda não está cheio, retorna array vazio (mais estável)
+            if (bufferDePedras.length < TAMANHO_BUFFER * 0.8) {
+                // console.log(`⏳ Aquecendo buffer: ${bufferDePedras.length}/${TAMANHO_BUFFER}`);
+                return [];
+            }
+
             const contagem = {};
             const ultimaReferencia = {};
+            const totalFrames = bufferDePedras.length;
 
-            // Percorre o histórico das últimas leituras
+            // Conta aparições de cada pedra
             bufferDePedras.forEach(listaDePedras => {
+                const pedrasNesteFrame = new Set();
+
                 listaDePedras.forEach(pedra => {
-                    // Ordena o valor (ex: "4|2" vira "2|4") para garantir que o sistema não veja como 2 pedras diferentes
+                    // Normaliza o valor (ordena os números)
                     const partes = pedra.valor.split('|').map(Number).sort();
                     const idPedra = `${partes[0]}|${partes[1]}`;
 
-                    contagem[idPedra] = (contagem[idPedra] || 0) + 1;
+                    // Evita contar a mesma pedra múltiplas vezes no mesmo frame
+                    if (!pedrasNesteFrame.has(idPedra)) {
+                        pedrasNesteFrame.add(idPedra);
+                        contagem[idPedra] = (contagem[idPedra] || 0) + 1;
 
-                    // Salva o objeto mais recente para mantermos as coordenadas (x,y) e ângulos sempre atualizados
-                    ultimaReferencia[idPedra] = pedra;
+                        // Sempre mantém a referência mais recente (coordenadas atualizadas)
+                        ultimaReferencia[idPedra] = pedra;
+                    }
                 });
             });
 
-            // Retorna para a interface apenas as pedras que sobreviveram ao corte
+            // Filtra pedras que aparecem consistentemente
             const pedrasFiltradas = [];
+            const pedrasRejeitadas = [];
+
             for (const id in contagem) {
-                if (contagem[id] >= MIN_APARICOES) {
+                const aparicoes = contagem[id];
+                const percentual = (aparicoes / totalFrames) * 100;
+
+                if (aparicoes >= MIN_APARICOES) {
                     pedrasFiltradas.push(ultimaReferencia[id]);
+                    // console.log(`✅ ${id}: ${aparicoes}/${totalFrames} (${percentual.toFixed(0)}%)`);
+                } else {
+                    pedrasRejeitadas.push(`${id} (${aparicoes}/${totalFrames})`);
+                }
+            }
+
+            // Log para debug (a cada 10 frames para não poluir)
+            contadorFrames++;
+            if (contadorFrames % 10 === 0) {
+                // console.log(`📈 Frame #${contadorFrames}: ${pedrasFiltradas.length} pedras validadas, ${pedrasRejeitadas.length} rejeitadas`);
+                if (pedrasRejeitadas.length > 0 && pedrasRejeitadas.length <= 3) {
+                    // console.log(`   Rejeitadas: ${pedrasRejeitadas.join(', ')}`);
                 }
             }
 
             return pedrasFiltradas;
         }
 
-        // Modifique a função loopDoJogo para incluir a verificação de duplicata
         async function loopDoJogo() {
+            const tempoInicio = performance.now();
+
             try {
                 const resposta = await fetch('/api/estado_jogo');
                 const dados = await resposta.json();
 
-                // 🔥 VERIFICA SE HOUVE DUPLICATA E MOSTRA POPUP
                 if (dados.duplicada && dados.duplicada !== 'null' && dados.duplicada !== null) {
                     mostrarToast(dados.duplicada);
-                    console.log(dados.duplicada);
+                    // console.log(dados.duplicada);
                 }
 
-                // ==========================================
-                // 1. ALIMENTAR OS BUFFERS E DESCARTAR O ANTIGO
-                // ==========================================
                 bufferMesa.push(dados.mesa);
                 if (bufferMesa.length > TAMANHO_BUFFER) bufferMesa.shift();
 
@@ -949,21 +981,15 @@
                     }
                 });
 
-                // ==========================================
-                // 2. APLICAR O FILTRO E RENDERIZAR
-                // ==========================================
-
-                // Filtra a mesa e desenha
                 const mesaFiltrada = filtrarPedrasRecorrentes(bufferMesa);
+                ultimaListaMesa = mesaFiltrada;
                 renderizarMesaFisica(mesaFiltrada);
 
-                // Filtra os jogadores e desenha
                 ['p1', 'p2', 'p3', 'p4'].forEach(jogador => {
                     if (dados.jogadores[jogador]) {
                         const maoFiltrada = filtrarPedrasRecorrentes(bufferJogadores[jogador]);
                         renderizarMaoJogador(maoFiltrada, `pedras-${jogador}`, mesaFiltrada);
 
-                        // Regra do Sino usando a mão filtrada (evita tocar o sino por leitura falsa)
                         if (dados.modo_atual === jogador && maoFiltrada.length === 7) {
                             document.getElementById('somSucesso').play();
                             fetch('/api/set_modo', {
@@ -975,10 +1001,15 @@
                     }
                 });
 
-                // Atualiza visual dos botões se o modo mudou pelo Python
                 if(dados.modo_atual !== modoAtualAnterior) {
                     atualizarBotoesScan(dados.modo_atual);
                     modoAtualAnterior = dados.modo_atual;
+                }
+
+                // Log de performance (a cada 20 chamadas)
+                if (contadorFrames % 20 === 0) {
+                    const tempoTotal = performance.now() - tempoInicio;
+                    console.log(`⚡ Loop executado em ${tempoTotal.toFixed(0)}ms`);
                 }
 
             } catch (error) {
@@ -987,14 +1018,20 @@
         }
 
         function loopAnimacao(timestamp) {
-            if (timestamp - ultimoUpdate >= (FREQUENCIA_FETCH_MS + 300)) {
+            if (timestamp - ultimoUpdate >= FREQUENCIA_FETCH_MS) {
                 ultimoUpdate = timestamp;
                 loopDoJogo();
             }
             animationId = requestAnimationFrame(loopAnimacao);
         }
-        // Iniciar animação
         animationId = requestAnimationFrame(loopAnimacao);
+
+        window.addEventListener('resize', () => {
+            recalcularLayout();
+            if (ultimaListaMesa && ultimaListaMesa.length > 0) {
+                renderizarMesaFisica(ultimaListaMesa);
+            }
+        });
 
         // ==========================================
         // INTEGRAÇÃO COM O FIREBASE (PLACAR DOMINÓ)
@@ -1009,32 +1046,25 @@
                 if (!json || !json.fields) return;
 
                 const campos = json.fields;
-
                 const active = campos[`status`].stringValue;
-                // console.log(active);
 
-                // Faz o loop para os 4 jogadores
                 for (let i = 1; i <= 4; i++) {
                     if (active === "active") {
-                        // Extração segura dos dados (Lida com o fato do JSON ter stringValue e integerValue)
                         const nome = campos[`nome${i}`] ? `Jogador${i} - ${campos[`nome${i}`].stringValue}` : `Jogador${i}`;
                         const pontos = campos[`jogador${i}`] ? parseInt(campos[`jogador${i}`].integerValue) : 0;
                         const raios = campos[`raios${i}`] ? parseInt(campos[`raios${i}`].integerValue) : 0;
                         const lambretas = campos[`lambretas${i}`] ? parseInt(campos[`lambretas${i}`].integerValue) : 0;
 
-                        // 1. Atualiza o Nome
                         document.getElementById(`nome-p${i}`).innerText = nome;
 
-                        // 2. Atualiza as 6 Bolinhas (Pinta de amarelo as ativas)
                         let htmlBolinhas = '';
-                        const totalPontosPartida = 4; // O padrão do dominó até bater
+                        const totalPontosPartida = 4;
                         for (let b = 1; b <= totalPontosPartida; b++) {
                             const classeAtiva = b <= pontos ? 'ativa' : '';
                             htmlBolinhas += `<div class="bolinha-placar ${classeAtiva}"></div>`;
                         }
                         document.getElementById(`bolinhas-p${i}`).innerHTML = htmlBolinhas;
 
-                        // 3. Atualiza os Ícones (Raios e Lambretas)
                         let htmlExtras = '';
                         if (raios > 0) htmlExtras += `<span title="Raios">⚡ ${raios}</span>`;
                         if (lambretas > 0) htmlExtras += `<span title="Lambretas">🛵 ${lambretas}</span>`;
@@ -1050,21 +1080,18 @@
             }
         }
 
-        // Para o Firebase, use setInterval mesmo, mas com throttle
         let firebaseTimeout = null;
         function sincronizarPlacarFirebaseThrottled() {
             if (firebaseTimeout) return;
             firebaseTimeout = setTimeout(() => {
                 sincronizarPlacarFirebase();
                 firebaseTimeout = null;
-            }, 100); // Throttle de 100ms
+            }, 100);
         }
 
-        // Chame sincronizarPlacarFirebaseThrottled() ao invés de sincronizarPlacarFirebase diretamente
         setInterval(() => {
             sincronizarPlacarFirebaseThrottled();
         }, INTERVALO_FIREBASE);
-
 
     </script>
 </body>
