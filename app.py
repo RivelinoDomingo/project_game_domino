@@ -11,8 +11,9 @@ from collections import deque
 app = Flask(__name__)
 
 # Configurações otimizadas
-# device = 'http://192.168.1.100:5000/video?video_size=1920x1080'
-device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
+device = 'http://192.168.0.129:5000/video?video_size=1920x1080'
+# device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
+# device = '/sdcard/Movies/IPcam/rec_2026-04-07_21-49.mp4'
 # device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 0.0
@@ -464,13 +465,14 @@ def processar_frame(img, tempo_atual, args):
     out = None
 
     processar = False
-    if not conf_busca:
-        processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, CONFIGS['area_min'], cord_cont)
-        conf_busca = True
-    else:
-        processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
+    #if not conf_busca:
+    #    processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, CONFIGS['area_min'], cord_cont)
+    #    conf_busca = True
+    #else:
+    #    processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
     # print(f"Valor de Coordenadas do contorno de averiguação: {cord_cont}")
-    # processar = True
+    processar = True
+    
     if processar or time.time() - time_exec <= 1.5:
         # Refinamento de Contornos
         cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -496,8 +498,8 @@ def processar_frame(img, tempo_atual, args):
 
         if debug_mode:
             # Converte binário para BGR (3 canais)
-            # out = cv2.cvtColor(vales_points, cv2.COLOR_GRAY2BGR)
-        # else:
+            out = cv2.cvtColor(vales_points, cv2.COLOR_GRAY2BGR)
+        else:
             out = img.copy()
 
         kernel_derreter = np.ones((7, 7), np.uint8)
