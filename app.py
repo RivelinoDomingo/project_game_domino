@@ -11,9 +11,9 @@ from collections import deque
 app = Flask(__name__)
 
 # Configurações otimizadas
-device = 'http://192.168.0.129:5000/video?video_size=1920x1080'
+# device = 'http://192.168.0.129:5000/video?video_size=1920x1080'
 # device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
-# device = '/sdcard/Movies/IPcam/rec_2026-04-07_21-49.mp4'
+device = '/sdcard/Movies/IPcam/rec_2026-05-12_23-04.mp4'
 # device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 0.0
@@ -54,13 +54,13 @@ def parse_arguments():
     return parser.parse_args()
 
 CONFIGS = {
-    'distancia_filtro': 20,
+    'distancia_filtro': 15,
     'distancia_mov': 15,
     'distancia_corte': 62,
-    'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 1600,                # Area maxima das pedras
+    'tamanho_kernel_morfologia': 13, # Novo parâmetro para o tamanho da fenda a ser fechada
+    'area_max': 1200,                # Area maxima das pedras
     'area_min': 500,
-    'area_ponto': 35,
+    'area_ponto': 30,
     'distancia_conexao': 200,
 }
 
@@ -221,13 +221,19 @@ def inicializar_camera():
     """Inicializa a câmera com tentativas e timeout"""
     global camera
     try:
-        # camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
-        camera = cv2.VideoCapture(device)
+        
+        if device.startswith(("http://", "https://")):
+            camera = cv2.VideoCapture(device)
+        else:
+            camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
+            
         if not camera.isOpened():
             print("⚠️ Falha ao abrir câmera, tentando novamente...")
             time.sleep(1)
-            # camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
-            camera = cv2.VideoCapture(device)
+            if device.startswith(("http://", "https://")):
+                camera = cv2.VideoCapture(device)
+            else:
+                camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
 
 
         # Configurações para reduzir buffer e latência
@@ -446,7 +452,7 @@ def processar_frame(img, tempo_atual, args):
     # 1. ENCONTRAR A SILHUETA SÓLIDA BASE
     # ====================================================================
      # 1. Máscara Sólida Base
-    _, mask_branca = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    _, mask_branca = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
     contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     # cv2.imshow("1 - Mask Branca", mask_branca)
 
@@ -498,7 +504,7 @@ def processar_frame(img, tempo_atual, args):
 
         if debug_mode:
             # Converte binário para BGR (3 canais)
-            out = cv2.cvtColor(vales_points, cv2.COLOR_GRAY2BGR)
+            out = cv2.cvtColor(mask_branca, cv2.COLOR_GRAY2BGR)
         else:
             out = img.copy()
 
@@ -783,12 +789,12 @@ def processar_frame(img, tempo_atual, args):
 
                     if not zero and f"{pts_cima}|{pts_baixo}" == "0|0":
                         continue
-                    cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                    cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                    cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                    cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
-                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 15, cy - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.putText(out, f"{ratio:.2f}", (cx - 140, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                    cv2.putText(out, f"{ratio:.2f}", (cx - 140, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(out, f"{int(area)}", (cx - 90, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                    cv2.putText(out, f"{int(area)}", (cx - 90, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx + 30, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx + 30, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
                 except Exception as e:
                     # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
