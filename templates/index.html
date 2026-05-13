@@ -111,6 +111,11 @@
             display: flex;
             z-index: 10;
             transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        .area-jogador .btn-scan,
+        .area-jogador .header-jogador {
+            pointer-events: auto;
         }
 
         /* Estado padrão - áreas vazias (quase invisíveis, só header) */
@@ -124,9 +129,9 @@
 
         /* P1 (Topo) e P3 (Base) - Horizontais */
         #area-p1, #area-p3 {
-            left: 140px; /* Libera espaço para as laterais */
-            right: 140px;
-            height: 140px; /* Tamanho fixo, não empurra mais a tela */
+            left: 0;
+            right: 0;
+            height: 140px;
         }
 
         #area-p1 {
@@ -142,8 +147,9 @@
         #area-p1 .header-jogador, #area-p3 .header-jogador {
             display: flex;
             flex-direction: row;
-            justify-content: space-between;
+            justify-content: center;
             align-items: center;
+            gap: 12px;
             width: 100%;
             padding: 10px 20px;
             box-sizing: border-box;
@@ -169,8 +175,9 @@
         #area-p4 .header-jogador, #area-p2 .header-jogador {
             writing-mode: vertical-rl;
             display: flex;
-            justify-content: space-between;
+            justify-content: center;
             align-items: center;
+            gap: 12px;
             height: 100%;
             padding: 20px 10px;
             box-sizing: border-box;
@@ -183,14 +190,14 @@
         #area-p4 .info-placar, #area-p2 .info-placar { flex-direction: row; align-items: center; }
 
         .nome-jogador {
-            font-size: 15px; font-weight: 700; color: var(--text-light);
+            font-size: 4vh; font-weight: 700; color: var(--text-light);
             text-transform: uppercase; letter-spacing: 1px;
             text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
         }
 
         .bolinhas-container { display: flex; gap: 4px; }
         .bolinha-placar {
-            width: 12px; height: 12px; border-radius: 50%;
+            width: 1.8vh; height: 1.8vh; border-radius: 50%;
             background-color: rgba(255,255,255,0.3); box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
         }
         .bolinha-placar.ativa {
@@ -198,12 +205,12 @@
             box-shadow: 0 0 8px rgba(241, 196, 15, 0.8), inset 0 1px 2px rgba(255,255,255,0.5);
         }
 
-        .extras-placar { font-size: 14px; display: flex; gap: 10px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8);}
+        .extras-placar { font-size: 2vh; display: flex; gap: 10px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8);}
 
         .btn-scan {
             background-color: rgba(52, 152, 219, 0.8);
-            color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 20px;
-            padding: 6px 15px; cursor: pointer; font-weight: bold; font-size: 12px;
+            color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 14px;
+            padding: 3px 8px; cursor: pointer; font-weight: bold; font-size: 10px;
             transition: 0.2s; backdrop-filter: blur(4px); white-space: nowrap;
         }
         .btn-scan:hover { background-color: var(--accent-blue); transform: scale(1.05); }
@@ -585,35 +592,38 @@
                 }
             });
 
-            const HEADER_SIZE = 60;
+            // Proporcional à tela real — resolve encolhimento no Streamlabs/WebView
+            const alturaHeader  = viewportH * 0.08;  // header vazio
+            const alturaArea    = viewportH * 0.18;  // área com pedras (P1/P3)
+            const larguraArea   = viewportW * 0.12;  // área com pedras (P2/P4)
 
-            const espacoTopo = areasComPedras.p1 ? 160 : HEADER_SIZE;
-            const espacoBaixo = areasComPedras.p3 ? 160 : HEADER_SIZE;
-            const espacoEsquerda = areasComPedras.p4 ? 160 : HEADER_SIZE;
-            const espacoDireita = areasComPedras.p2 ? 160 : HEADER_SIZE;
+            const espacoTopo     = areasComPedras.p1 ? alturaArea  : alturaHeader;
+            const espacoBaixo    = areasComPedras.p3 ? alturaArea  : alturaHeader;
+            const espacoEsquerda = areasComPedras.p4 ? larguraArea : alturaHeader;
+            const espacoDireita  = areasComPedras.p2 ? larguraArea : alturaHeader;
 
             const areaP1 = document.getElementById('area-p1');
-            areaP1.style.left = espacoEsquerda + 'px';
-            areaP1.style.right = espacoDireita + 'px';
-            areaP1.style.height = areasComPedras.p1 ? '150px' : '60px';
+            areaP1.style.left = '0';
+            areaP1.style.right = '0';
+            areaP1.style.height = (areasComPedras.p1 ? alturaArea : alturaHeader) + 'px';
             areaP1.style.top = '0';
 
             const areaP3 = document.getElementById('area-p3');
-            areaP3.style.left = espacoEsquerda + 'px';
-            areaP3.style.right = espacoDireita + 'px';
-            areaP3.style.height = areasComPedras.p3 ? '150px' : '60px';
+            areaP3.style.left = '0';
+            areaP3.style.right = '0';
+            areaP3.style.height = (areasComPedras.p3 ? alturaArea : alturaHeader) + 'px';
             areaP3.style.bottom = '0';
 
             const areaP4 = document.getElementById('area-p4');
             areaP4.style.top = espacoTopo + 'px';
             areaP4.style.bottom = espacoBaixo + 'px';
-            areaP4.style.width = areasComPedras.p4 ? '150px' : '60px';
+            areaP4.style.width = (areasComPedras.p4 ? larguraArea : alturaHeader) + 'px';
             areaP4.style.left = '0';
 
             const areaP2 = document.getElementById('area-p2');
             areaP2.style.top = espacoTopo + 'px';
             areaP2.style.bottom = espacoBaixo + 'px';
-            areaP2.style.width = areasComPedras.p2 ? '150px' : '60px';
+            areaP2.style.width = (areasComPedras.p2 ? larguraArea : alturaHeader) + 'px';
             areaP2.style.right = '0';
 
             const areaMesa = document.getElementById('area-mesa');
@@ -627,16 +637,6 @@
                 watermark.style.left = '50%';
                 watermark.style.top = '50%';
             }
-
-            // console.log('Layout recalculado:', {
-            //     areas: areasComPedras,
-            //     mesa: {
-            //         left: espacoEsquerda,
-            //         top: espacoTopo,
-            //         right: espacoDireita,
-            //         bottom: espacoBaixo
-            //     }
-            // });
         }
 
         // ==========================================
