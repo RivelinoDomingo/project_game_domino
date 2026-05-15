@@ -93,23 +93,17 @@ def extrair_e_contar(img, rect_pedra):
 
     pedra_recortada = img_rot[y1:y2, x1:x2]
 
-    zero_local = True
-
     if pedra_recortada.size == 0:
         return 0, 0, False, 0.0
 
-    # # Verifica se tem conteúdo (zero|zero real vs pedra branca pura)
-    # contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
-    #                                       cv2.CHAIN_APPROX_SIMPLE)
-    # zero_local = any(cv2.contourArea(c) >= CONFIGS['area_ponto']
-    #                  for c in contornos_total)
+    # Verifica se tem conteúdo (zero|zero real vs pedra branca pura)
+    contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
+                                          cv2.CHAIN_APPROX_SIMPLE)
 
     # ----------------------------------------------------------------
     # LOCALIZAR A FENDA (divisor real entre as metades)
     # ----------------------------------------------------------------
-    meio = _encontrar_fenda(pedra_recortada)
-    if meio is None:
-        return 0, 0, False, 0.0
+    meio, zero_local = _encontrar_fenda(pedra_recortada)
 
     metade_cima = pedra_recortada[0:meio, :]
     metade_baixo = pedra_recortada[meio:, :]
@@ -123,51 +117,45 @@ def extrair_e_contar(img, rect_pedra):
 
     return pts_cima, pts_baixo, zero_local, med_area
 
-
 def _encontrar_fenda(pedra_bin):
-    """
-    Localiza a linha divisória real da pedra de dominó usando o contorno
-    retangular da fenda (área preta entre as duas metades).
-
-    Estratégia:
-    - Inverte a imagem (fenda fica branca)
-    - Busca contornos com ratio de aspecto alto (fenda é larga e fina)
-    - Retorna o Y do centro do melhor candidato
-    """
     h_total = pedra_bin.shape[0]
+    w_total = pedra_bin.shape[1]
 
-    # Zona de busca: terço central da pedra (a fenda nunca está nas pontas)
     margem = h_total // 4
     zona = pedra_bin[margem: h_total - margem, :]
 
-    # Inverte: fenda preta → branca
-    zona_inv = cv2.bitwise_not(zona)
-
-    contornos, _ = cv2.findContours(zona_inv, cv2.RETR_EXTERNAL,
+    # SEM inverter — procura contornos brancos na zona central
+    # A fenda deixa bordas brancas finas acima e abaixo dela
+    # que formam retângulos longos e finos (ratio alto)
+    contornos, _ = cv2.findContours(zona, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
 
     melhor_ratio = 0.0
     melhor_y = None
-
-    # Precisa ocupar ao menos 40% da largura da pedra
-    largura_minima = pedra_bin.shape[1] * 0.4
+    largura_minima = w_total * 0.3
+    zero_local = False
 
     for c in contornos:
         x, y, cw, ch = cv2.boundingRect(c)
-        if ch == 0:
+        if ch == 0 or cw == 0:
             continue
 
-        # A fenda é bem mais larga do que alta: ratio alto
+        # Só interessa retângulos MAIS LARGOS que altos (fenda = comprida e fina)
+        if cw <= ch:
+            continue
+
         ratio = cw / ch
-
-
 
         if ratio > melhor_ratio and cw >= largura_minima:
             melhor_ratio = ratio
-            # Y no espaço original da pedra_recortada
             melhor_y = margem + y + ch // 2
+        if ratio > 3.0:
+            zero_local = True
 
-    return melhor_y
+    if melhor_y is None:
+        return h_total // 2, zero_local
+
+    return melhor_y, zero_local
 
 
 def contar_bolinhas(pedra_recortada, metade):

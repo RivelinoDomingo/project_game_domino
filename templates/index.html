@@ -304,6 +304,8 @@
             display: flex; flex-direction: column; box-sizing: border-box; padding: 3px;
             box-shadow: 3px 4px 8px rgba(0,0,0,0.5), inset -1px -1px 3px rgba(0,0,0,0.1);
             transition: all 0.2s ease;
+            will-change: transform;
+            -webkit-transform: translate(-50%, -50%) rotate(var(--angulo)) scale(var(--escala));
         }
         #area-mesa .domino { width: 46px; height: 92px; border-radius: 8px; }
 
