@@ -437,16 +437,11 @@ def extrair_e_contar(img, rect_pedra):
     # Verifica se tem conteúdo (zero|zero real vs pedra branca pura)
     contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
                                           cv2.CHAIN_APPROX_SIMPLE)
-    # zero_local = any(cv2.contourArea(c) >= CONFIGS['area_ponto']
-    #                  for c in contornos_total)
-
 
     # ----------------------------------------------------------------
     # LOCALIZAR A FENDA (divisor real entre as metades)
     # ----------------------------------------------------------------
     meio, zero_local = _encontrar_fenda(pedra_recortada)
-    # if not zero_local:
-    #     return 0, 0, False, 0.0
 
     metade_cima = pedra_recortada[0:meio, :]
     metade_baixo = pedra_recortada[meio:, :]
@@ -465,7 +460,6 @@ def extrair_e_contar(img, rect_pedra):
         med_area = abs((abs(med_ar1) + abs(med_ar2)) / 2)
 
     return pts_cima, pts_baixo, zero_local, med_area
-
 
 def _encontrar_fenda(pedra_bin):
     h_total = pedra_bin.shape[0]
