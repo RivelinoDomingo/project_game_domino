@@ -679,7 +679,8 @@
             recalcularLayout();
         }
 
-        const fatorBase = 1.6;
+        const fatorBase = 1.55;
+
         function renderizarMesaFisica(listaPedras) {
             const container = document.getElementById('pedras-mesa');
             const watermark = document.getElementById('watermark-central');
@@ -698,29 +699,38 @@
                 watermark.style.visibility = 'hidden';
             }
 
-            const RAIO_VIZINHOS = 65;
+            const RAIO_VIZINHOS = 35;
 
             listaPedras.forEach(p => p.isGato = false);
 
             function obterMetades(p) {
                 const distDoCentro = 15;
-                let angle_usage = p.angulo >= 80 ? -90 : 90;
-                const angulo_pedra = p.angulo + angle_usage;
-                const rad = angulo_pedra * (Math.PI / 180);
                 const valores = p.valor.split('|');
 
-                return [
-                    {
-                        v: valores[0],
-                        x: p.x + distDoCentro * Math.sin(rad),
-                        y: p.y - distDoCentro * Math.cos(rad)
-                    },
-                    {
-                        v: valores[1],
-                        x: p.x - distDoCentro * Math.sin(rad),
-                        y: p.y + distDoCentro * Math.cos(rad)
-                    }
-                ];
+                // minAreaRect: ângulo é do lado CURTO em relação ao eixo X
+                // O lado LONGO está a +90° do ângulo retornado
+                const anguloLongo = p.angulo + 90;
+                const rad = anguloLongo * (Math.PI / 180);
+
+                const dx = distDoCentro * Math.cos(rad);
+                const dy = distDoCentro * Math.sin(rad);
+
+                // Dois centros das metades ao longo do eixo longo
+                const mA = { v: valores[0], x: p.x + dx, y: p.y + dy };
+                const mB = { v: valores[1], x: p.x - dx, y: p.y - dy };
+
+                // Python entrega partes[0] como a metade com menor Y
+                // EXCETO quando a pedra está deitada (eixo longo quase horizontal)
+                // Nesse caso, menor X define partes[0]
+                const pedraEstaDeita = Math.abs(Math.cos(rad)) > Math.abs(Math.sin(rad));
+
+                if (pedraEstaDeita) {
+                    // Horizontal: partes[0] é a metade mais à ESQUERDA (menor X)
+                    return mA.x <= mB.x ? [mA, mB] : [mB, mA];
+                } else {
+                    // Vertical: partes[0] é a metade mais acima (menor Y)
+                    return mA.y <= mB.y ? [mA, mB] : [mB, mA];
+                }
             }
 
             for (let i = 0; i < listaPedras.length; i++) {
@@ -792,8 +802,9 @@
                 const posicaoX = (pedraObj.x - minX) * fatorFinal + offsetX;
                 const posicaoY = (pedraObj.y - minY) * fatorFinal + offsetY;
 
-                let angle_usage = pedraObj.angulo >= 80 ? -90 : 90;
-                const anguloCSS = pedraObj.angulo + angle_usage;
+                // let angle_usage = pedraObj.angulo >= 80 ? -90 : 90;
+                // const anguloCSS = pedraObj.angulo + angle_usage;
+                const anguloCSS = pedraObj.angulo + 90;
                 const classeExtra = pedraObj.isGato ? ' gato' : '';
 
                 const dominoHtml = `

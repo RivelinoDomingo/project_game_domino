@@ -13,7 +13,8 @@ app = Flask(__name__)
 # Configurações otimizadas
 # device = 'http://192.168.0.129:5000/video?video_size=1920x1080'
 # device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
-device = '/sdcard/Movies/IPcam/rec_2026-05-12_23-04.mp4'
+# device = '/sdcard/Movies/IPcam/rec_2026-05-12_23-04.mp4'
+device = '/home/rivelino/Downloads/rec_2026-05-12_23-04.mp4'
 # device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 0.0
@@ -58,36 +59,19 @@ CONFIGS = {
     'distancia_mov': 15,
     'distancia_corte': 62,
     'tamanho_kernel_morfologia': 13, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 1200,                # Area maxima das pedras
+    'area_max': 2000,                # Area maxima das pedras
     'area_min': 500,
-    'area_ponto': 25,
+    'area_ponto': 12,
     'distancia_conexao': 200,
 }
 
 
-def ordenar_pontos(pts):
-    # Inicializa uma lista de coordenadas que serão ordenadas
-    # [top-left, top-right, bottom-right, bottom-left]
-    rect = np.zeros((4, 2), dtype="float32")
-
-    # O ponto superior-esquerdo terá a menor soma, o inferior-direito a maior
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-
-    # O ponto superior-direito terá a menor diferença, o inferior-esquerdo a maior
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-
-    return rect
-
+##  Extração dos pontos das pedras ######
 def extrair_e_contar(img, rect_pedra):
     center, size, angle = rect_pedra
     cx, cy = center
 
     w, h = size
-    # Garante h sempre como lado LONGO (comprimento da pedra)
     if w > h:
         w, h = h, w
         angle += 90
@@ -95,74 +79,126 @@ def extrair_e_contar(img, rect_pedra):
     w_int = int(round(w))
     h_int = int(round(h))
 
-    # Rotaciona em torno do centro EXATO da pedra
+    # --- Rotaciona com INTER_NEAREST para preservar binário sem blur ---
     M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
-
     altura_img, largura_img = img.shape[:2]
     img_rot = cv2.warpAffine(img, M, (largura_img, altura_img),
-                             flags=cv2.INTER_LINEAR)
+                             flags=cv2.INTER_NEAREST)  # <-- SEM interpolação
 
-    # Recorta exatamente o retângulo alinhado ao eixo
-    x1 = int(round(cx - w_int / 2))
-    y1 = int(round(cy - h_int / 2))
-    x2 = x1 + w_int
-    y2 = y1 + h_int
+    # Recorta exatamente o bounding rect
+    x1 = max(0, int(round(cx - w_int / 2)))
+    y1 = max(0, int(round(cy - h_int / 2)))
+    x2 = min(largura_img, x1 + w_int)
+    y2 = min(altura_img, y1 + h_int)
 
-    # Clamp nos limites da imagem
-    x1c = max(0, x1)
-    y1c = max(0, y1)
-    x2c = min(largura_img, x2)
-    y2c = min(altura_img, y2)
+    pedra_recortada = img_rot[y1:y2, x1:x2]
 
-    pedra_recortada = img_rot[y1c:y2c, x1c:x2c]
+    zero_local = True
 
     if pedra_recortada.size == 0:
         return 0, 0, False, 0.0
 
-    # Verifica se a pedra tem conteúdo (não é branca pura = 0|0 válido)
-    contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
-                                          cv2.CHAIN_APPROX_SIMPLE)
-    zero_local = False
-    if contornos_total:
-        area_total = sum(cv2.contourArea(c) for c in contornos_total)
-        if area_total >= CONFIGS['area_ponto']:
-            zero_local = True
+    # # Verifica se tem conteúdo (zero|zero real vs pedra branca pura)
+    # contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
+    #                                       cv2.CHAIN_APPROX_SIMPLE)
+    # zero_local = any(cv2.contourArea(c) >= CONFIGS['area_ponto']
+    #                  for c in contornos_total)
 
-    # Divide ao meio pelo EIXO LONGO (h, vertical após alinhamento)
-    meio = pedra_recortada.shape[0] // 2
+    # ----------------------------------------------------------------
+    # LOCALIZAR A FENDA (divisor real entre as metades)
+    # ----------------------------------------------------------------
+    meio = _encontrar_fenda(pedra_recortada)
+    if meio is None:
+        return 0, 0, False, 0.0
+
     metade_cima = pedra_recortada[0:meio, :]
     metade_baixo = pedra_recortada[meio:, :]
 
-    def contar_bolinhas(metade):
-        contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL,
-                                        cv2.CHAIN_APPROX_SIMPLE)
-        pontos = 0
-        point_area = CONFIGS['area_ponto']
-        med_area = 0.0
-
-        for c in contornos:
-            area = cv2.contourArea(c)
-            if point_area * 0.4 < area < point_area * 2.1:
-                perimetro = cv2.arcLength(c, True)
-                if perimetro == 0:
-                    continue
-                circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-                if circularidade >= 0.6:
-                    med_area += area
-                    pontos += 1
-
-        if med_area > 0.0 and pontos > 0:
-            med_area = abs(med_area / pontos)
-        return min(pontos, 6), med_area
-
-    pts_cima, med_ar1 = contar_bolinhas(metade_cima)
-    pts_baixo, med_ar2 = contar_bolinhas(metade_baixo)
+    pts_cima, med_ar1 = contar_bolinhas(pedra_recortada, metade_cima)
+    pts_baixo, med_ar2 = contar_bolinhas(pedra_recortada, metade_baixo)
 
     med_area = 0.0
     if med_ar1 > 0.0 or med_ar2 > 0.0:
         med_area = abs((abs(med_ar1) + abs(med_ar2)) / 2)
 
     return pts_cima, pts_baixo, zero_local, med_area
+
+
+def _encontrar_fenda(pedra_bin):
+    """
+    Localiza a linha divisória real da pedra de dominó usando o contorno
+    retangular da fenda (área preta entre as duas metades).
+
+    Estratégia:
+    - Inverte a imagem (fenda fica branca)
+    - Busca contornos com ratio de aspecto alto (fenda é larga e fina)
+    - Retorna o Y do centro do melhor candidato
+    """
+    h_total = pedra_bin.shape[0]
+
+    # Zona de busca: terço central da pedra (a fenda nunca está nas pontas)
+    margem = h_total // 4
+    zona = pedra_bin[margem: h_total - margem, :]
+
+    # Inverte: fenda preta → branca
+    zona_inv = cv2.bitwise_not(zona)
+
+    contornos, _ = cv2.findContours(zona_inv, cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE)
+
+    melhor_ratio = 0.0
+    melhor_y = None
+
+    # Precisa ocupar ao menos 40% da largura da pedra
+    largura_minima = pedra_bin.shape[1] * 0.4
+
+    for c in contornos:
+        x, y, cw, ch = cv2.boundingRect(c)
+        if ch == 0:
+            continue
+
+        # A fenda é bem mais larga do que alta: ratio alto
+        ratio = cw / ch
+
+
+
+        if ratio > melhor_ratio and cw >= largura_minima:
+            melhor_ratio = ratio
+            # Y no espaço original da pedra_recortada
+            melhor_y = margem + y + ch // 2
+
+    return melhor_y
+
+
+def contar_bolinhas(pedra_recortada, metade):
+    """
+    Conta bolinhas numa metade. Recebe pedra_recortada só para
+    poder calibrar area_ponto dinamicamente se necessário.
+    """
+    global zoom_factor
+    contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE)
+    pontos = 0
+    fator_area = (zoom_factor - 0.4) ** 2
+    point_area = int(CONFIGS['area_ponto'] * fator_area)
+    # point_area = CONFIGS['area_ponto']
+    med_area = 0.0
+
+    for c in contornos:
+        area = cv2.contourArea(c)
+        if point_area * 0.4 < area < point_area * 2.5:
+            perimetro = cv2.arcLength(c, True)
+            if perimetro == 0:
+                continue
+            circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+            if circularidade >= 0.55:   # levemente mais permissivo pós INTER_NEAREST
+                med_area += area
+                pontos += 1
+
+    if med_area > 0.0 and pontos > 0:
+        med_area = abs(med_area / pontos)
+    return min(pontos, 6), med_area
+
 
 def valor_ja_existe(valor_procurado, modo_atual, pedras_ja_vistas_neste_frame):
     global maos_jogadores
@@ -424,6 +460,17 @@ def loop_da_camera():
             print(f"Erro no loop principal: {e}")
             time.sleep(0.5)
 
+def corrigir_orientacao(img):
+    """
+    Garante que a imagem sempre saia em modo PAISAGEM (largura > altura).
+    Independente de como o celular estava segurado ou da linha rotate.
+    """
+    h, w = img.shape[:2]
+    if h > w:
+        # Imagem em portrait → rotaciona para landscape
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    return img
+
 def processar_frame(img, tempo_atual, args):
     """Processa o frame de forma otimizada"""
     global ultima_leitura_pedras, ultimo_frame_processado, duplicada
@@ -437,7 +484,7 @@ def processar_frame(img, tempo_atual, args):
         start = False
 
     # Rotaciona a imagem para ficar mais adequando à mesa
-    img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    img = corrigir_orientacao(img)
 
     # Aplica zoom se necessário
     if zoom_factor != 1.0:
@@ -528,7 +575,12 @@ def processar_frame(img, tempo_atual, args):
         
         kernel = np.ones((1, 1), np.uint8)   # tamanho
         #mask_suave = cv2.morphologyEx(mask_pontos, cv2.MORPH_CLOSE, kernel, iterations=2)
-        mask_pontos = cv2.morphologyEx(mask_pontos, cv2.MORPH_OPEN, kernel, iterations=1)
+        # mask_pontos = cv2.morphologyEx(mask_pontos, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        kernel_erode = np.ones((2, 2), np.uint8)
+        mask_pontos_erode = cv2.erode(mask_pontos, kernel_erode, iterations=1)
+        mask_pontos_blur = cv2.medianBlur(mask_pontos_erode, 1)
+        mask_pontos = cv2.morphologyEx(mask_pontos_blur, cv2.MORPH_OPEN, kernel, iterations=1)
         
         # mask_pontos = cv2.medianBlur(mask_pontos, 3)
         #_, tresh_ponto = cv2.threshold(warped, 250, 255, cv2.THRESH_BINARY)
@@ -786,11 +838,15 @@ def processar_frame(img, tempo_atual, args):
             # Usamos a lista_final (que já tem o ângulo e o valor corrigidos para a Web)
             # ou a pedras_aprovadas (que tem as caixas retangulares cruas do OpenCV).
             # Como você quer desenhar o rect_pedra, vamos usar o pedras_aprovadas original daquele frame.
+            ar_fac = (zoom_factor - 0.4) ** 2
+            area_usada = int(CONFIGS['area_ponto'] * ar_fac)
 
-            cv2.putText(out, f"Area maxima: {area_max}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            cv2.putText(out, f"Area minima: {area_min}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            cv2.putText(out, f"Ratio MAX: 2.4    Ratio MIN: 1.5", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            cv2.putText(out, f"Area media dos Pontos: {med_area_ponto:.2f}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.rectangle(out, (5,5), (500,200), (120,120,120), -1)
+            cv2.putText(out, f"Area maxima: {area_max}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Area minima: {area_min}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Ratio MAX: 2.4    Ratio MIN: 1.5", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Area media dos Pontos: {med_area_ponto:.2f}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Area de ponto usada: {area_usada}", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
              #if debug_mode and len(rejeitados) > 0:
              #   for p in rejeitados:
@@ -830,12 +886,12 @@ def processar_frame(img, tempo_atual, args):
 
                     if not zero and f"{pts_cima}|{pts_baixo}" == "0|0":
                         continue
-                    cv2.putText(out, f"{ratio:.2f}", (cx - 140, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                    cv2.putText(out, f"{ratio:.2f}", (cx - 140, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                    cv2.putText(out, f"{int(area)}", (cx - 90, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                    cv2.putText(out, f"{int(area)}", (cx - 90, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx + 30, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
-                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx + 30, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                    cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                    cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+                    cv2.putText(out, f"{pts_cima}|{pts_baixo}", (cx - 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
                 except Exception as e:
                     # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
