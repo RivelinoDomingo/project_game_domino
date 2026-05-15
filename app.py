@@ -60,7 +60,7 @@ CONFIGS = {
     'tamanho_kernel_morfologia': 13, # Novo parâmetro para o tamanho da fenda a ser fechada
     'area_max': 1200,                # Area maxima das pedras
     'area_min': 500,
-    'area_ponto': 30,
+    'area_ponto': 25,
     'distancia_conexao': 200,
 }
 
@@ -83,60 +83,86 @@ def ordenar_pontos(pts):
     return rect
 
 def extrair_e_contar(img, rect_pedra):
-    box = cv2.boxPoints(rect_pedra)
-    pts = ordenar_pontos(box)
+    center, size, angle = rect_pedra
+    cx, cy = center
 
-    dist_0_1 = np.linalg.norm(pts[0] - pts[1])
-    dist_0_3 = np.linalg.norm(pts[0] - pts[3])
+    w, h = size
+    # Garante h sempre como lado LONGO (comprimento da pedra)
+    if w > h:
+        w, h = h, w
+        angle += 90
 
-    if dist_0_1 > dist_0_3:
-        pts = np.array([pts[1], pts[2], pts[3], pts[0]], dtype="float32")
+    w_int = int(round(w))
+    h_int = int(round(h))
 
-    dst = np.array([[0, 0], [39, 0], [39, 79], [0, 79]], dtype="float32")
-    M = cv2.getPerspectiveTransform(pts, dst)
-    warped = cv2.warpPerspective(img, M, (40, 80))
+    # Rotaciona em torno do centro EXATO da pedra
+    M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
 
-    warped = cv2.medianBlur(warped, 3)
-    _, thresh = cv2.threshold(warped, 160, 255, cv2.THRESH_BINARY)
+    altura_img, largura_img = img.shape[:2]
+    img_rot = cv2.warpAffine(img, M, (largura_img, altura_img),
+                             flags=cv2.INTER_LINEAR)
 
-    contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Recorta exatamente o retângulo alinhado ao eixo
+    x1 = int(round(cx - w_int / 2))
+    y1 = int(round(cy - h_int / 2))
+    x2 = x1 + w_int
+    y2 = y1 + h_int
+
+    # Clamp nos limites da imagem
+    x1c = max(0, x1)
+    y1c = max(0, y1)
+    x2c = min(largura_img, x2)
+    y2c = min(altura_img, y2)
+
+    pedra_recortada = img_rot[y1c:y2c, x1c:x2c]
+
+    if pedra_recortada.size == 0:
+        return 0, 0, False, 0.0
+
+    # Verifica se a pedra tem conteúdo (não é branca pura = 0|0 válido)
+    contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
+                                          cv2.CHAIN_APPROX_SIMPLE)
     zero_local = False
-    if contornos:
-        area = 0.0
-        for c in contornos:
-            area += cv2.contourArea(c)
-            if area >= CONFIGS['area_ponto']:
-                zero_local = True
-                break
+    if contornos_total:
+        area_total = sum(cv2.contourArea(c) for c in contornos_total)
+        if area_total >= CONFIGS['area_ponto']:
+            zero_local = True
 
-
-    metade_cima = thresh[0:40, 0:40]
-    metade_baixo = thresh[40:80, 0:40]
+    # Divide ao meio pelo EIXO LONGO (h, vertical após alinhamento)
+    meio = pedra_recortada.shape[0] // 2
+    metade_cima = pedra_recortada[0:meio, :]
+    metade_baixo = pedra_recortada[meio:, :]
 
     def contar_bolinhas(metade):
-        contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
+        contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL,
+                                        cv2.CHAIN_APPROX_SIMPLE)
         pontos = 0
-        # CORREÇÃO: Usando o zoom ao quadrado
         point_area = CONFIGS['area_ponto']
+        med_area = 0.0
 
         for c in contornos:
             area = cv2.contourArea(c)
-            circularidade = 0.0
-            if point_area * 0.6 < area < point_area * 2.1:
+            if point_area * 0.4 < area < point_area * 2.1:
                 perimetro = cv2.arcLength(c, True)
                 if perimetro == 0:
                     continue
                 circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-                if circularidade >= 0.7:
+                if circularidade >= 0.6:
+                    med_area += area
                     pontos += 1
 
-        return min(pontos, 6)
+        if med_area > 0.0 and pontos > 0:
+            med_area = abs(med_area / pontos)
+        return min(pontos, 6), med_area
 
-    pts_cima  = contar_bolinhas(metade_cima)
-    pts_baixo = contar_bolinhas(metade_baixo)
+    pts_cima, med_ar1 = contar_bolinhas(metade_cima)
+    pts_baixo, med_ar2 = contar_bolinhas(metade_baixo)
 
-    return pts_cima, pts_baixo, zero_local
+    med_area = 0.0
+    if med_ar1 > 0.0 or med_ar2 > 0.0:
+        med_area = abs((abs(med_ar1) + abs(med_ar2)) / 2)
+
+    return pts_cima, pts_baixo, zero_local, med_area
 
 def valor_ja_existe(valor_procurado, modo_atual, pedras_ja_vistas_neste_frame):
     global maos_jogadores
@@ -471,15 +497,15 @@ def processar_frame(img, tempo_atual, args):
     out = None
 
     processar = False
-    #if not conf_busca:
-    #    processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, CONFIGS['area_min'], cord_cont)
-    #    conf_busca = True
-    #else:
-    #    processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
+    if not conf_busca:
+        processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, CONFIGS['area_min'], cord_cont)
+        conf_busca = True
+    else:
+        processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
     # print(f"Valor de Coordenadas do contorno de averiguação: {cord_cont}")
-    processar = True
+    # processar = True
     
-    if processar or time.time() - time_exec <= 1.5:
+    if processar or time.time() - time_exec <= 2.5:
         # Refinamento de Contornos
         cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         mask_filtrada = np.zeros_like(gray)
@@ -499,12 +525,21 @@ def processar_frame(img, tempo_atual, args):
 
         # Se preferir ver onde os pontos foram removidos:
         mask_pontos = cv2.bitwise_xor(mask_filtrada, mask_branca)
+        
+        kernel = np.ones((1, 1), np.uint8)   # tamanho
+        #mask_suave = cv2.morphologyEx(mask_pontos, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask_pontos = cv2.morphologyEx(mask_pontos, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        # mask_pontos = cv2.medianBlur(mask_pontos, 3)
+        #_, tresh_ponto = cv2.threshold(warped, 250, 255, cv2.THRESH_BINARY)
+        
+        # mask_pontos = tresh_ponto
 
         pontos_vale, vales_points = detectar_vales_por_morfologia(mask_filtrada)
 
         if debug_mode:
             # Converte binário para BGR (3 canais)
-            out = cv2.cvtColor(mask_branca, cv2.COLOR_GRAY2BGR)
+            out = cv2.cvtColor(mask_pontos, cv2.COLOR_GRAY2BGR)
         else:
             out = img.copy()
 
@@ -576,12 +611,12 @@ def processar_frame(img, tempo_atual, args):
 
                 if width > height:
                     ratio = width/height
-                    margem_A = 0.9
-                    margem_L = 1.02
+                    margem_A = 0.99
+                    margem_L = 1.07
 
                 else:
                     ratio = height/width
-                    margem_A = 1.05
+                    margem_A = 1.0
                     margem_L = 0.95
 
                 # print(f"Valor de ratio: {ratio} e Área: {area}")
@@ -692,14 +727,16 @@ def processar_frame(img, tempo_atual, args):
 
         lista_final = []
         pedras_vistas_agora = []
+        med_area_ponto = 0.0
 
         for d in pedras_aprovadas[:]:
             cx_nova, cy_nova = d['centro']
 
             # Lemos os valores reais direto da imagem cortada sem depender de cache
-            pts_cima, pts_baixo, zero = extrair_e_contar(mask_pontos, d['rect_pedra'])
+            pts_cima, pts_baixo, zero, med_ar = extrair_e_contar(mask_pontos, d['rect_pedra'])
             valor_pedra = f"{pts_cima}|{pts_baixo}"
-
+            med_area_ponto += med_ar
+    
             if valor_pedra == "0|0" and not zero:
                 pedras_aprovadas.remove(d)
                 continue
@@ -730,6 +767,8 @@ def processar_frame(img, tempo_atual, args):
                 if modo_leitura != 'mesa':
                     print(f"🚫 Duplicata rejeitada: {valor_pedra}")
                     continue
+        if med_area_ponto > 0.0:            
+            med_area_ponto = abs(med_area_ponto / len(pedras_aprovadas))         
 
         # ONDE ESTAMOS A OLHAR?
         if modo_leitura == 'mesa':
@@ -751,23 +790,25 @@ def processar_frame(img, tempo_atual, args):
             cv2.putText(out, f"Area maxima: {area_max}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.putText(out, f"Area minima: {area_min}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.putText(out, f"Ratio MAX: 2.4    Ratio MIN: 1.5", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(out, f"Area media dos Pontos: {med_area_ponto:.2f}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
-            if debug_mode and len(rejeitados) > 0:
-                for p in rejeitados:
-                    try:
-                        area = p['area']
-                        ratio = p['ratio']
-                        # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
-                        cx, cy = map(int, p['centro'])
-                        cv2.circle(out, (cx, cy), 7, 0, 2)
-                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                    except Exception as e:
-                        # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
-                        print(f"Erro ao desenhar contorno no stream: {e}")
-                        pass
+             #if debug_mode and len(rejeitados) > 0:
+             #   for p in rejeitados:
+             #       try:
+             #           area = p['area']
+             #           ratio = p['ratio']
+             #           # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
+             #           cx, cy = map(int, p['centro'])
+             #           cv2.circle(out, (cx, cy), 7, 0, 2)
+             #           cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+              #          cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+               #         cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                #        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                 #   except Exception as e:
+                  #      # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
+                   #     print(f"Erro ao desenhar contorno no stream: {e}")
+                    #    pass
+                        
 
             for p in pedras_aprovadas:  # Limita desenho a 20 pedras por performance
                 try:
@@ -785,7 +826,7 @@ def processar_frame(img, tempo_atual, args):
                     ratio = p['ratio']
                     # Como tiramos o valor de pedras_aprovadas, precisamos pegar da leitura.
                     # Se você preferir não ler o valor aqui para poupar CPU, basta remover as linhas abaixo.
-                    pts_cima, pts_baixo, zero = extrair_e_contar(mask_pontos, p['rect_pedra'])
+                    pts_cima, pts_baixo, zero, _ = extrair_e_contar(mask_pontos, p['rect_pedra'])
 
                     if not zero and f"{pts_cima}|{pts_baixo}" == "0|0":
                         continue
