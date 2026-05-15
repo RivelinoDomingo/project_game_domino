@@ -170,8 +170,8 @@ def pipeline_blackhat(args):
 
             else:
                 ratio = height/width
-                margem_A = 1.0
-                margem_L = 0.95
+                margem_A = 1.12
+                margem_L = 1.08
 
             # print(f"Valor de ratio: {ratio} e Área: {area}")
 

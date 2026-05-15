@@ -558,7 +558,7 @@ def processar_frame(img, tempo_atual, args):
         mask_filtrada = np.zeros_like(gray)
 
         # Melhoria
-        fator_area = zoom_factor ** 2
+        fator_area = (zoom_factor - 0.4) ** 2
         area_min = int(CONFIGS['area_min'] * fator_area)
         area_max = int(CONFIGS['area_max'] * fator_area)
         raio_corte = int(CONFIGS['distancia_corte'] * zoom_factor) # Distância é linear
@@ -662,14 +662,16 @@ def processar_frame(img, tempo_atual, args):
                 width, height = size
 
                 if width > height:
+                    # Pedras na vertical
                     ratio = width/height
                     margem_A = 0.99
                     margem_L = 1.07
 
                 else:
+                    # Pedras na horizontal
                     ratio = height/width
-                    margem_A = 1.0
-                    margem_L = 0.95
+                    margem_A = 1.12
+                    margem_L = 1.08
 
                 # print(f"Valor de ratio: {ratio} e Área: {area}")
 
