@@ -13,6 +13,7 @@ def parse_arguments():
     parser.add_argument('imagem', help='Caminho para o arquivo de imagem')
     parser.add_argument('-z', '--zoom', type=float, default=1.0, help='Nível de zoom (padrão 1.0)')
     parser.add_argument('-p', '--proximidade', type=int, default=37, help='Distância mínima entre pedras')
+    parser.add_argument('-L', '--limiar', type=int, default=190, help='Limiar de branco (0-255), valores de uso 150-200')
     parser.add_argument('-d', '--debug', action='store_true', help='Ativa modo depuração')
     return parser.parse_args()
 
@@ -40,9 +41,9 @@ def pipeline_blackhat(args):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
    # 1. Máscara Sólida Base
-    _, mask_branca = cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY)
+    _, mask_branca = cv2.threshold(gray, args.limiar, 255, cv2.THRESH_BINARY)
     contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # cv2.imshow("1 - Mask Branca", mask_branca)
+    cv2.imshow("1 - Mask Branca", mask_branca)
 
     mask_solida = np.zeros_like(gray)
     cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
@@ -85,14 +86,15 @@ def pipeline_blackhat(args):
     kernel = np.ones((1, 1), np.uint8)   # tamanho
     kernel_erode = np.ones((2, 2), np.uint8)
     mask_pontos_erode = cv2.erode(mask_pontos, kernel_erode, iterations=1)
-    #mask_suave = cv2.morphologyEx(mask_pontos, cv2.MORPH_CLOSE, kernel, iterations=2)
-    # mask_pontos = cv2.morphologyEx(mask_pontos, cv2.MORPH_OPEN, kernel, iterations=1)
     mask_pontos_blur = cv2.medianBlur(mask_pontos_erode, 1)
-    mask_pontos = cv2.morphologyEx(mask_pontos_blur, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask_suave = cv2.morphologyEx(mask_pontos_blur, cv2.MORPH_CLOSE, kernel, iterations=5)
+    mask_pontos = cv2.morphologyEx(mask_suave, cv2.MORPH_OPEN, kernel, iterations=1)
+
+
     # mask_pontos = mask_pontos_erode
 
-    if args.debug:
-        cv2.imshow("Mascara dos Pontos", mask_pontos)
+    # if args.debug:
+    #     cv2.imshow("Mascara dos Pontos", mask_pontos)
 
     kernel_derreter = np.ones((7, 7), np.uint8)
     mask_corte = cv2.erode(mask_filtrada, kernel_derreter, iterations=3)
@@ -127,14 +129,14 @@ def pipeline_blackhat(args):
 
             pares_corte = encontrar_pares_corte(pontos_vale, mask_corte, raio_corte)
             cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pares_corte)
-            if args.debug:
-                cv2.imshow("2 - Mask Corte Usada", mask_corte)
+            # if args.debug:
+            #     cv2.imshow("2 - Mask Corte Usada", mask_corte)
 
         if args.debug:
             mask_cortada = np.zeros_like(gray)
             cv2.drawContours(mask_cortada, cnt_finais, -1, 255, thickness=cv2.FILLED)
             cv2.imshow("2 - Mask Cortada", mask_cortada)
-            visualizar_cortes(img_debug_final, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
+            # visualizar_cortes(img_debug_final, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
 
     else:
         if contours_final:
@@ -144,15 +146,19 @@ def pipeline_blackhat(args):
 
     candidatos = []
     out = img.copy()
+    out_debug = np.zeros_like(gray)
 
     if args.debug:
         print(f"Contornos encontrados: {len(cnt_finais)}")
+
+    varia = True
 
     for cnt in cnt_finais:
         area = cv2.contourArea(cnt)
         # if area < 10 or area > 2200:
         #     continue
-        if area_max > area > area_min * 0.7:
+        # if area_max > area > area_min * 0.7:
+        if (area_min * 7) > area:
             rect = cv2.minAreaRect(cnt)
             center, size, angle = rect
             w_box, h_box = size
@@ -173,10 +179,30 @@ def pipeline_blackhat(args):
                 margem_A = 1.12
                 margem_L = 1.08
 
+            if args.debug:
+                cx, cy = map(int, center)
+                val = 0
+                if varia:
+                    val = 30
+                    varia = False
+                else:
+                    val = 0
+                    varia = True
+                cv2.putText(out_debug, f"Area = {area}", (cx - 20, cy - (50 + val)), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1)
+                cv2.putText(out_debug, f"Ratio = {ratio:.1f}", (cx - 20, cy - (30 + val)), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1)
+                cv2.drawContours(out_debug, cnt, -1, 255, -1)
+                cv2.imshow("0 -- Pedras", out_debug)
+                # cv2.imshow("0 -- Mask Removidos", mask_pontos)
+                cv2.waitKey()
+
             # print(f"Valor de ratio: {ratio} e Área: {area}")
 
-            if not (2.4 >= ratio >= 1.6):
+            if not (2.4 >= ratio >= 1.5):
                 # print(f"Ratio fora do padrão: {ratio}")
+                # cv2.imshow("0 -- Mask Cortada", mask_diferenca)
+                # cv2.imshow("0 -- Mask Removidos", mask_pontos)
+                # cv2.waitKey()
+                # sys.exit(0)
                 continue
 
             rect_pedra = (center, (width*margem_L, height*margem_A), angle)
@@ -283,9 +309,9 @@ def pipeline_blackhat(args):
         cx, cy = int(d['centro'][0]), int(d['centro'][1])
 
         # Fundo preto para o texto ficar legível
-        cv2.putText(out, texto, (cx - 60, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+        cv2.putText(out, texto, (cx - 10, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
         # Texto em branco
-        cv2.putText(out, texto, (cx - 60, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(out, texto, (cx - 10, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         print(f"Pedra encontrada: {texto}")
     if med_area_ponto > 0.0:
@@ -300,110 +326,6 @@ def pipeline_blackhat(args):
     cv2.imshow("Resultado Final Limpo", out)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-
-# def ordenar_pontos(pts):
-#     # Inicializa uma lista de coordenadas que serão ordenadas
-#     # [top-left, top-right, bottom-right, bottom-left]
-#     rect = np.zeros((4, 2), dtype="float32")
-#
-#     # O ponto superior-esquerdo terá a menor soma, o inferior-direito a maior
-#     s = pts.sum(axis=1)
-#     rect[0] = pts[np.argmin(s)]
-#     rect[2] = pts[np.argmax(s)]
-#
-#     # O ponto superior-direito terá a menor diferença, o inferior-esquerdo a maior
-#     diff = np.diff(pts, axis=1)
-#     rect[1] = pts[np.argmin(diff)]
-#     rect[3] = pts[np.argmax(diff)]
-#
-#     return rect
-#
-# def extrair_e_contar(img, rect_pedra):
-#     center, size, angle = rect_pedra
-#     cx, cy = center
-#
-#     w, h = size
-#     # Garante h sempre como lado LONGO (comprimento da pedra)
-#     if w > h:
-#         w, h = h, w
-#         angle += 90
-#
-#     w_int = int(round(w))
-#     h_int = int(round(h))
-#
-#     # Rotaciona em torno do centro EXATO da pedra
-#     M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
-#
-#     altura_img, largura_img = img.shape[:2]
-#     img_rot = cv2.warpAffine(img, M, (largura_img, altura_img),
-#                              flags=cv2.INTER_LINEAR)
-#
-#     # Recorta exatamente o retângulo alinhado ao eixo
-#     x1 = int(round(cx - w_int / 2))
-#     y1 = int(round(cy - h_int / 2))
-#     x2 = x1 + w_int
-#     y2 = y1 + h_int
-#
-#     # Clamp nos limites da imagem
-#     x1c = max(0, x1)
-#     y1c = max(0, y1)
-#     x2c = min(largura_img, x2)
-#     y2c = min(altura_img, y2)
-#
-#     pedra_recortada = img_rot[y1c:y2c, x1c:x2c]
-#
-#     if pedra_recortada.size == 0:
-#         return 0, 0, False, 0.0
-#
-#     # Verifica se a pedra tem conteúdo (não é branca pura = 0|0 válido)
-#     contornos_total, _ = cv2.findContours(pedra_recortada, cv2.RETR_EXTERNAL,
-#                                           cv2.CHAIN_APPROX_SIMPLE)
-#     zero_local = False
-#     if contornos_total:
-#         area_total = sum(cv2.contourArea(c) for c in contornos_total)
-#         if area_total >= CONFIGS['area_ponto']:
-#             zero_local = True
-#
-#     # Divide ao meio pelo EIXO LONGO (h, vertical após alinhamento)
-#     meio = pedra_recortada.shape[0] // 2
-#     metade_cima = pedra_recortada[0:meio, :]
-#     metade_baixo = pedra_recortada[meio:, :]
-#
-#     def contar_bolinhas(metade):
-#         contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL,
-#                                         cv2.CHAIN_APPROX_SIMPLE)
-#         pontos = 0
-#         point_area = CONFIGS['area_ponto']
-#         med_area = 0.0
-#         if args.debug:
-#             cv2.imshow("Medade da Pedra", metade)
-#             cv2.waitKey(0)
-#
-#         for c in contornos:
-#             area = cv2.contourArea(c)
-#             if point_area * 0.4 < area < point_area * 2.1:
-#                 perimetro = cv2.arcLength(c, True)
-#                 if perimetro == 0:
-#                     continue
-#                 circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-#                 if circularidade >= 0.6:
-#                     med_area += area
-#                     pontos += 1
-#
-#         if med_area > 0.0 and pontos > 0:
-#             med_area = abs(med_area / pontos)
-#         return min(pontos, 6), med_area
-#
-#     pts_cima, med_ar1 = contar_bolinhas(metade_cima)
-#     pts_baixo, med_ar2 = contar_bolinhas(metade_baixo)
-#
-#     med_area = 0.0
-#     if med_ar1 > 0.0 or med_ar2 > 0.0:
-#         med_area = abs((abs(med_ar1) + abs(med_ar2)) / 2)
-#
-#     return pts_cima, pts_baixo, zero_local, med_area
-
-
 
 def extrair_e_contar(img, rect_pedra):
     center, size, angle = rect_pedra
@@ -452,8 +374,25 @@ def extrair_e_contar(img, rect_pedra):
         # print(f"Ratio do traço: {ratio}")
         cv2.waitKey(0)
 
-    pts_cima, med_ar1 = contar_bolinhas(pedra_recortada, metade_cima)
-    pts_baixo, med_ar2 = contar_bolinhas(pedra_recortada, metade_baixo)
+    med_ar = 0.0
+    count = 0
+    med_area_bruta = 0.0
+
+    for c in contornos_total:
+        area = cv2.contourArea(c)
+        perimetro = cv2.arcLength(c, True)
+        if perimetro == 0:
+            continue
+        circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+        if circularidade >= 0.6:
+            med_ar += area
+            count += 1
+
+    if med_ar > 0:
+        med_area_bruta = med_ar / count
+
+    pts_cima, med_ar1 = contar_bolinhas(med_area_bruta, metade_cima)
+    pts_baixo, med_ar2 = contar_bolinhas(med_area_bruta, metade_baixo)
 
     med_area = 0.0
     if med_ar1 > 0.0 or med_ar2 > 0.0:
@@ -489,7 +428,7 @@ def _encontrar_fenda(pedra_bin):
             continue
 
         ratio = cw / ch
-        print(f"Valor de cw: {cw}, Valor de ch: {ch}, Ratio = {ratio}")
+        # print(f"Valor de cw: {cw}, Valor de ch: {ch}, Ratio = {ratio}")
 
         if ratio > melhor_ratio and cw >= largura_minima:
             melhor_ratio = ratio
@@ -502,29 +441,30 @@ def _encontrar_fenda(pedra_bin):
 
     return melhor_y, zero_local
 
-def contar_bolinhas(pedra_recortada, metade):
+def contar_bolinhas(med_bruta, metade):
     """
-    Conta bolinhas numa metade. Recebe pedra_recortada só para
-    poder calibrar area_ponto dinamicamente se necessário.
+    Conta bolinhas numa metade. Recebe med_bruta para
+    poder calibrar area_ponto dinamicamente.
     """
     contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
     pontos = 0
-    fator_area = args.zoom ** 2
-    point_area = int(CONFIGS['area_ponto'] * fator_area)
+    # fator_area = args.zoom ** 2
+    # point_area = int(CONFIGS['area_ponto'] * fator_area)
     # point_area = CONFIGS['area_ponto']
     med_area = 0.0
 
     for c in contornos:
         area = cv2.contourArea(c)
-        if point_area * 0.4 < area < point_area * 2.5:
-            perimetro = cv2.arcLength(c, True)
-            if perimetro == 0:
-                continue
-            circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-            if circularidade >= 0.55:   # levemente mais permissivo pós INTER_NEAREST
-                med_area += area
-                pontos += 1
+        # if point_area * 0.4 < area < point_area * 2.5:
+        perimetro = cv2.arcLength(c, True)
+        if perimetro == 0:
+            continue
+        circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+        # print(f"Circularidade: {circularidade}")
+        if circularidade >= 0.6 and area >= (med_bruta * 0.7) :   # levemente mais permissivo pós INTER_NEAREST
+            med_area += area
+            pontos += 1
 
     if med_area > 0.0 and pontos > 0:
         med_area = abs(med_area / pontos)
@@ -548,9 +488,9 @@ def detectar_vales_por_morfologia(mask_solida):
 
     # 2. Subtração (O Pulo do Gato)
     mask_vales = cv2.subtract(mask_fechada, mask_solida)
-    if args.debug:
-        cv2.imshow("1 - Mask Solida", mask_solida) # Descomente se precisar debugar
-        cv2.imshow("1 - Mask Vales", mask_vales) # Descomente se precisar debugar
+    # if args.debug:
+    #     cv2.imshow("1 - Mask Solida", mask_solida) # Descomente se precisar debugar
+    #     cv2.imshow("1 - Mask Vales", mask_vales) # Descomente se precisar debugar
 
     # 3. Extrair os Pontos
     cnts_vales, _ = cv2.findContours(mask_vales, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

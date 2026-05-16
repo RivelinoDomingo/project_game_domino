@@ -14,7 +14,7 @@ app = Flask(__name__)
 # device = 'http://192.168.0.129:5000/video?video_size=1920x1080'
 # device = '/home/rivelino/Downloads/rec_2026-04-07_21-49.mp4'
 # device = '/sdcard/Movies/IPcam/rec_2026-05-12_23-04.mp4'
-device = '/home/rivelino/Downloads/rec_2026-05-12_23-04.mp4'
+# device = '/home/rivelino/Downloads/rec_2026-05-12_23-04.mp4'
 # device = '/home/rivelino/Downloads/rec_2026-04-20_00-17.mp4'
 # device = '/home/rivelino/Git/project_game_domino/teste_colocamento_de_pedras.mp4'
 zoom_factor = 0.0
@@ -33,6 +33,8 @@ maos_jogadores = {'p1': [], 'p2': [], 'p3': [], 'p4': []}
 Zerou_mao = False
 duplicada = None
 zoom_reset = False
+largura_frame = 0
+altura_frame = 0
 
 debug_mode = True
 start = True
@@ -49,17 +51,21 @@ area_base = 0
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Processa imagens de dominó')
+    parser.add_argument('arquivo', help='Caminho do arquivo ou link da câmera.')
     parser.add_argument('-z', '--zoom', type=float, default=1.4, help='Nível de zoom (padrão 1.0)')
     parser.add_argument('-p', '--proximidade', type=int, default=37, help='Distância mínima entre pedras')
+    parser.add_argument('-L', '--limiar', type=int, default=190, help='Limiar de branco (0-255), valores de uso 150-200')
     parser.add_argument('-d', '--debug', action='store_true', help='Ativa modo depuração')
     return parser.parse_args()
+
+device = parse_arguments().arquivo
 
 CONFIGS = {
     'distancia_filtro': 15,
     'distancia_mov': 15,
     'distancia_corte': 62,
     'tamanho_kernel_morfologia': 13, # Novo parâmetro para o tamanho da fenda a ser fechada
-    'area_max': 2000,                # Area maxima das pedras
+    'area_max': 4000,                # Area maxima das pedras
     'area_min': 500,
     'area_ponto': 12,
     'distancia_conexao': 200,
@@ -108,8 +114,25 @@ def extrair_e_contar(img, rect_pedra):
     metade_cima = pedra_recortada[0:meio, :]
     metade_baixo = pedra_recortada[meio:, :]
 
-    pts_cima, med_ar1 = contar_bolinhas(pedra_recortada, metade_cima)
-    pts_baixo, med_ar2 = contar_bolinhas(pedra_recortada, metade_baixo)
+    med_ar = 0.0
+    count = 0
+    med_area_bruta = 0.0
+
+    for c in contornos_total:
+        area = cv2.contourArea(c)
+        perimetro = cv2.arcLength(c, True)
+        if perimetro == 0:
+            continue
+        circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+        if circularidade >= 0.6:
+            med_ar += area
+            count += 1
+
+    if med_ar > 0:
+        med_area_bruta = med_ar / count
+
+    pts_cima, med_ar1 = contar_bolinhas(med_area_bruta, metade_cima)
+    pts_baixo, med_ar2 = contar_bolinhas(med_area_bruta, metade_baixo)
 
     med_area = 0.0
     if med_ar1 > 0.0 or med_ar2 > 0.0:
@@ -157,31 +180,27 @@ def _encontrar_fenda(pedra_bin):
 
     return melhor_y, zero_local
 
-
-def contar_bolinhas(pedra_recortada, metade):
+def contar_bolinhas(med_bruta, metade):
     """
-    Conta bolinhas numa metade. Recebe pedra_recortada só para
-    poder calibrar area_ponto dinamicamente se necessário.
+    Conta bolinhas numa metade. Recebe med_bruta para
+    poder calibrar area_ponto dinamicamente.
     """
-    global zoom_factor
     contornos, _ = cv2.findContours(metade, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
     pontos = 0
-    fator_area = (zoom_factor - 0.4) ** 2
-    point_area = int(CONFIGS['area_ponto'] * fator_area)
-    # point_area = CONFIGS['area_ponto']
     med_area = 0.0
 
     for c in contornos:
         area = cv2.contourArea(c)
-        if point_area * 0.4 < area < point_area * 2.5:
-            perimetro = cv2.arcLength(c, True)
-            if perimetro == 0:
-                continue
-            circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-            if circularidade >= 0.55:   # levemente mais permissivo pós INTER_NEAREST
-                med_area += area
-                pontos += 1
+        # if point_area * 0.4 < area < point_area * 2.5:
+        perimetro = cv2.arcLength(c, True)
+        if perimetro == 0:
+            continue
+        circularidade = 4 * np.pi * (area / (perimetro * perimetro))
+        # print(f"Circularidade: {circularidade}")
+        if circularidade >= 0.6 and area >= (med_bruta * 0.7) :   # levemente mais permissivo pós INTER_NEAREST
+            med_area += area
+            pontos += 1
 
     if med_area > 0.0 and pontos > 0:
         med_area = abs(med_area / pontos)
@@ -464,6 +483,7 @@ def processar_frame(img, tempo_atual, args):
     global ultima_leitura_pedras, ultimo_frame_processado, duplicada
     global resetMaoPlayers, maos_jogadores, start
     global modo_leitura, tirar_foto_debug, enviar_video, zoom_factor
+    global largura_frame, altura_frame
 
     ## Variaveis
     debug_mode = args.debug
@@ -478,6 +498,9 @@ def processar_frame(img, tempo_atual, args):
     if zoom_factor != 1.0:
         img = cv2.resize(img, None, fx=zoom_factor, fy=zoom_factor,
                         interpolation=cv2.INTER_LINEAR)
+
+    largura_frame = img.shape[1]
+    altura_frame = img.shape[0]
 
     # Reset das mãos se necessário
     if resetMaoPlayers:
@@ -513,7 +536,7 @@ def processar_frame(img, tempo_atual, args):
     # 1. ENCONTRAR A SILHUETA SÓLIDA BASE
     # ====================================================================
      # 1. Máscara Sólida Base
-    _, mask_branca = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
+    _, mask_branca = cv2.threshold(gray, args.limiar, 255, cv2.THRESH_BINARY)
     contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     # cv2.imshow("1 - Mask Branca", mask_branca)
 
@@ -555,25 +578,15 @@ def processar_frame(img, tempo_atual, args):
             if cv2.contourArea(c) > area_min:
                 cv2.drawContours(mask_filtrada, [c], -1, 255, -1)
 
-        # Para remover os pontos pretos (subtrair áreas)
-        mask_diferenca = cv2.bitwise_and(mask_filtrada, mask_branca)
-
         # Se preferir ver onde os pontos foram removidos:
         mask_pontos = cv2.bitwise_xor(mask_filtrada, mask_branca)
-        
-        kernel = np.ones((1, 1), np.uint8)   # tamanho
-        #mask_suave = cv2.morphologyEx(mask_pontos, cv2.MORPH_CLOSE, kernel, iterations=2)
-        # mask_pontos = cv2.morphologyEx(mask_pontos, cv2.MORPH_OPEN, kernel, iterations=1)
 
+        kernel = np.ones((1, 1), np.uint8)   # tamanho
         kernel_erode = np.ones((2, 2), np.uint8)
         mask_pontos_erode = cv2.erode(mask_pontos, kernel_erode, iterations=1)
         mask_pontos_blur = cv2.medianBlur(mask_pontos_erode, 1)
-        mask_pontos = cv2.morphologyEx(mask_pontos_blur, cv2.MORPH_OPEN, kernel, iterations=1)
-        
-        # mask_pontos = cv2.medianBlur(mask_pontos, 3)
-        #_, tresh_ponto = cv2.threshold(warped, 250, 255, cv2.THRESH_BINARY)
-        
-        # mask_pontos = tresh_ponto
+        mask_suave = cv2.morphologyEx(mask_pontos_blur, cv2.MORPH_CLOSE, kernel, iterations=5)
+        mask_pontos = cv2.morphologyEx(mask_suave, cv2.MORPH_OPEN, kernel, iterations=1)
 
         pontos_vale, vales_points = detectar_vales_por_morfologia(mask_filtrada)
 
@@ -641,7 +654,7 @@ def processar_frame(img, tempo_atual, args):
             center, size, angle = rect
             w_box, h_box = size
 
-            if area_max > area > area_min * 0.7:
+            if (area_max * 2.5) > area > (area_min * 0.7):
                 if w_box == 0 or h_box == 0:
                     # print("Box com dimensões zeradas")
                     reject = True
@@ -677,7 +690,7 @@ def processar_frame(img, tempo_atual, args):
                     'ratio': ratio,
                 })
 
-            if debug_mode and reject and area > area_min:
+            if debug_mode and reject and (area > area_max or area_min > area):
                 rejeitados.append({
                     'centro': center,
                     'area': area,
@@ -838,22 +851,22 @@ def processar_frame(img, tempo_atual, args):
             cv2.putText(out, f"Area media dos Pontos: {med_area_ponto:.2f}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.putText(out, f"Area de ponto usada: {area_usada}", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
-             #if debug_mode and len(rejeitados) > 0:
-             #   for p in rejeitados:
-             #       try:
-             #           area = p['area']
-             #           ratio = p['ratio']
-             #           # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
-             #           cx, cy = map(int, p['centro'])
-             #           cv2.circle(out, (cx, cy), 7, 0, 2)
-             #           cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-              #          cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-               #         cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
-                #        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                 #   except Exception as e:
-                  #      # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
-                   #     print(f"Erro ao desenhar contorno no stream: {e}")
-                    #    pass
+            if debug_mode and len(rejeitados) > 0:
+                for p in rejeitados:
+                    try:
+                        area = p['area']
+                        ratio = p['ratio']
+                        # Opcional (Recomendado): Escrever o valor lido na tela do stream para debug visual
+                        cx, cy = map(int, p['centro'])
+                        cv2.rectangle(out, (cx - 30, cy - 30), (cx + 30, cx + 30), (22,181,195), 2)
+                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                        cv2.putText(out, f"{ratio:.2f}", (cx - 30, cy - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+                        cv2.putText(out, f"{int(area)}", (cx - 30, cy - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    except Exception as e:
+                        # Boa prática: imprimir o erro no terminal ajuda a debugar se algo falhar
+                        print(f"Erro ao desenhar contorno no stream: {e}")
+                        pass
                         
 
             for p in pedras_aprovadas:  # Limita desenho a 20 pedras por performance
@@ -1206,13 +1219,14 @@ def action_exec():
 
 @app.route('/api/estado_jogo')
 def estado_jogo():
-    global duplicada
     # Esta rota envia TUDO (mesa e jogadores) para o HTML desenhar de uma vez só
     return jsonify({
         "modo_atual": modo_leitura,
         "mesa": ultima_leitura_pedras,
         "jogadores": maos_jogadores,
-        "duplicada": duplicada
+        "duplicada": duplicada,
+        "frame_largura": largura_frame,
+        "frame_altura": altura_frame
     })
 
 if __name__ == '__main__':
