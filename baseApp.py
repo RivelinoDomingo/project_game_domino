@@ -4,7 +4,7 @@ import math
 import argparse
 import time
 # from skimage.morphology import skeletonize
-# import sys
+import sys
 # from scipy.signal import find_peaks
 
 
@@ -43,7 +43,7 @@ def pipeline_blackhat(args):
    # 1. Máscara Sólida Base
     _, mask_branca = cv2.threshold(gray, args.limiar, 255, cv2.THRESH_BINARY)
     contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.imshow("1 - Mask Branca", mask_branca)
+    # cv2.imshow("1 - Mask Branca", mask_branca)
 
     mask_solida = np.zeros_like(gray)
     cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
@@ -69,263 +69,373 @@ def pipeline_blackhat(args):
         if cv2.contourArea(c) > area_min:
             cv2.drawContours(mask_filtrada, [c], -1, 255, -1)
 
+    # Alinhar contorno
+    def alinhar_contorno(contorno):
+        """
+        Rotaciona o contorno pelo ângulo do minAreaRect
+        para que o lado longo fique alinhado com o eixo Y (vertical).
+        Retorna o boundingRect ajustado.
+        """
+        rect = cv2.minAreaRect(contorno)
+        center, size, angle = rect
+        w, h = size
 
-    # Para remover os pontos pretos (subtrair áreas)
-    mask_diferenca = cv2.bitwise_and(mask_filtrada, mask_branca)
+        # Garante que h é sempre o lado longo
+        if w > h:
+            w, h = h, w
+            angle += 90
+
+        # Rotaciona os pontos do contorno em torno do centro
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+        # Aplica a rotação nos pontos do contorno
+        pontos = contorno.reshape(-1, 2).astype(np.float32)
+        pontos_rot = cv2.transform(pontos.reshape(1, -1, 2), M).reshape(-1, 2)
+
+        # boundingRect agora é ajustado ao eixo
+        x = int(pontos_rot[:, 0].min())
+        y = int(pontos_rot[:, 1].min())
+        cw = int(pontos_rot[:, 0].max()) - x
+        ch = int(pontos_rot[:, 1].max()) - y
+
+        return x, y, cw, ch, angle
 
     # Se preferir ver onde os pontos foram removidos:
-    mask_pontos = cv2.bitwise_xor(mask_filtrada, mask_branca)
+    mask_base_pontos = cv2.bitwise_xor(mask_filtrada, mask_branca)
+    cnts_pontos, _ = cv2.findContours(mask_base_pontos, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask_esp_pontos = np.zeros_like(gray)
+    mask_esp_tracos = np.zeros_like(gray)
 
-    # cv2.imshow("0 -- Mask Cortada", mask_diferenca)
-    # cv2.imshow("0 -- Mask Removidos", mask_pontos)
-    # cv2.waitKey()
+    # Obter as médias
+    med_cw_tracos = 0.0
+    counter = 0
+
+    for c in cnts_pontos:
+        x, y, cw, ch, angle = alinhar_contorno(c)
+        ratio = ch / cw if cw > 0 else 0
+        if ratio > 2.5:
+            med_cw_tracos += cw
+            counter += 1
+
+    med_cw_tracos = med_cw_tracos / counter if med_cw_tracos > 0 else 0
+    print(f"Média dos Traços: {med_cw_tracos}")
+
+    for c in cnts_pontos:
+        x, y, cw, ch, angle = alinhar_contorno(c)
+
+        ratio = ch / cw if cw > 0 else 0
+
+        if ratio > 2.5 and cw < med_cw_tracos + 2:
+            if angle > 100.0 or angle < 45.0:
+                acr_x = x + 5
+                acr_y = y + 10
+            else:
+                acr_x = x - 5
+                acr_y = y + 2
+            # cv2.putText(mask_esp_tracos, f"{int(angle)}", (acr_x, acr_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, 255, 1)
+            cv2.drawContours(mask_esp_tracos, [c], -1, 255, -1)
+            # print(f"Traço ---- ratio={ratio:.2f} cw={cw} ch={ch} angle={angle:.1f}")
+            # cv2.imshow("Contornos", mask_esp_tracos)
+            # cv2.waitKey(0)
+        else:
+            cv2.drawContours(mask_esp_pontos, [c], -1, 255, -1)
+            # print(f"     Ponto ----  ratio={ratio:.2f} cw={cw} ch={ch} angle={angle:.1f}")
+
+        cnts_tracos, _ = cv2.findContours(
+            mask_esp_tracos,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
+
     # sys.exit(0)
 
-    pontos_vale = detectar_vales_por_morfologia(mask_filtrada)
+    def angle_diff(a, b):
+        d = abs(a - b) % 180
+        return min(d, 180 - d)
 
-    kernel = np.ones((1, 1), np.uint8)   # tamanho
-    kernel_erode = np.ones((2, 2), np.uint8)
-    mask_pontos_erode = cv2.erode(mask_pontos, kernel_erode, iterations=1)
-    mask_pontos_blur = cv2.medianBlur(mask_pontos_erode, 1)
-    mask_suave = cv2.morphologyEx(mask_pontos_blur, cv2.MORPH_CLOSE, kernel, iterations=5)
-    mask_pontos = cv2.morphologyEx(mask_suave, cv2.MORPH_OPEN, kernel, iterations=1)
+    fragmentos = []
 
+    for c in cnts_tracos:
 
-    # mask_pontos = mask_pontos_erode
+        x, y, cw, ch, angle = alinhar_contorno(c)
 
-    # if args.debug:
-    #     cv2.imshow("Mascara dos Pontos", mask_pontos)
+        cx = x + cw // 2
+        cy = y + ch // 2
 
-    kernel_derreter = np.ones((7, 7), np.uint8)
-    mask_corte = cv2.erode(mask_filtrada, kernel_derreter, iterations=3)
+        fragmentos.append({
+            'contour': c,
+            'x': x,
+            'y': y,
+            'w': cw,
+            'h': ch,
+            'cx': cx,
+            'cy': cy,
+            'angle': angle
+        })
+    mask_tracos_unidos = np.zeros_like(gray)
+    for frag in fragmentos:
+        cv2.drawContours(
+            mask_tracos_unidos,
+            [frag['contour']],
+            -1,
+            255,
+            -1
+        )
+    for i in range(len(fragmentos)):
 
-    # cv2.imshow("0 -- Mask Filtrada", mask_filtrada)
+        for j in range(i + 1, len(fragmentos)):
 
+            a = fragmentos[i]
+            b = fragmentos[j]
 
-    contours_final, _ = cv2.findContours(mask_filtrada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # diferença vertical pequena
+            dy = abs(a['cy'] - b['cy'])
 
-    cnt_finais = []
-    if len(pontos_vale) >= 2 and contours_final:
-        if args.debug:
-            img_debug_final = visualizar_vales_detalhado(img, mask_filtrada, pontos_vale)
+            # distância horizontal
+            dx = abs(a['cx'] - b['cx'])
 
-        # if args.debug:
-        #     cv2.imshow("2 - Mask Usada", mask_filtrada)
+            # ângulo parecido
+            da = angle_diff(
+                a['angle'],
+                b['angle']
+            )
 
-        pares_corte = encontrar_pares_corte(pontos_vale, mask_filtrada, raio_corte)
-        cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pares_corte)
-        max_contorno = max(cnt_finais, key=cv2.contourArea)
-        max_contorno = cv2.contourArea(max_contorno)
-        # print(f"Maior contorno: {max_contorno}  -- Menor: {min_contorno}")
+            right_a = a['x'] + a['w']
+            left_b  = b['x']
 
-        if max_contorno > area_max * 3:
-            print("Recalculando com mascara reduzinda!")
-            print(f"Área max. permitida: {area_max * 1.8}")
-            print(f"Área do maior Contorno: {max_contorno}")
-            # contours_corte, _ = cv2.findContours(mask_corte, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            # mask_corte = np.zeros_like(gray)
-            # contorno_corte = max(contours_corte, key=cv2.contourArea)
-            # cv2.drawContours(mask_corte, [contorno_corte], -1, 255, -1)
+            gap = left_b - right_a
 
-            pares_corte = encontrar_pares_corte(pontos_vale, mask_corte, raio_corte)
-            cnt_finais = cortar_nos_vales_inteligente(mask_filtrada, pares_corte)
-            # if args.debug:
-            #     cv2.imshow("2 - Mask Corte Usada", mask_corte)
+            if (
+                dy < 20
+                and dx < 20
+                and da < 10
+            ):
 
-        if args.debug:
-            mask_cortada = np.zeros_like(gray)
-            cv2.drawContours(mask_cortada, cnt_finais, -1, 255, thickness=cv2.FILLED)
-            cv2.imshow("2 - Mask Cortada", mask_cortada)
-            # visualizar_cortes(img_debug_final, mask_filtrada, cnt_finais, pares_corte, "2 - Cortes Aplicados")
+                pt1 = (a['cx'], a['cy'])
+                pt2 = (b['cx'], b['cy'])
 
-    else:
-        if contours_final:
-            cnt_finais = contours_final
-        print("⚠️ Poucos vales detectados ou nenhum contorno encontrado!")
+                cv2.line(
+                    mask_tracos_unidos,
+                    pt1,
+                    pt2,
+                    255,
+                    thickness=1
+                )
+        # print(f"ratio={ratio:.2f} cw={cw} ch={ch} angle={angle:.1f}")
+        # cv2.imshow("0 -- Mask Tracos", mask_esp_tracos)
+        # cv2.waitKey()
+    # ====================================================================
+    # DETECÇÃO DE PEDRAS POR TRAÇOS (MODO EXPERIMENTAL)
+    # Usa mask_esp_tracos para localizar o traço central de cada pedra
+    # e constrói rect_pedra diretamente — sem depender de vales ou proximidade.
+    # O pipeline de vales original continua intacto abaixo.
+    # ====================================================================
+    kernel_erode = np.ones((4, 4), np.uint8)
+    kernel_close = np.ones((4, 4), np.uint8)
+    mask_pontos_erode = cv2.erode(mask_esp_pontos, kernel_erode, iterations=1)
 
+    # ============================================================
+    # DISTANCE TRANSFORM
+    # ============================================================
 
-    candidatos = []
-    out = img.copy()
-    out_debug = np.zeros_like(gray)
+    # Garantir imagem binária
+    mask_bin = (mask_esp_pontos > 0).astype(np.uint8)
+
+    # Distance transform
+    dist = cv2.distanceTransform(
+        mask_bin,
+        cv2.DIST_L2,
+        3
+    )
+
+    # Visualização debug
+    if args.debug:
+        dist_show = cv2.normalize(
+            dist,
+            None,
+            0,
+            255,
+            cv2.NORM_MINMAX
+        ).astype(np.uint8)
+
+        cv2.imshow("DIST TRANSFORM", dist_show)
+
+    # Threshold dos picos
+    _, mask_pontos_sep = cv2.threshold(
+        dist,
+        0.38 * dist.max(),
+        255,
+        cv2.THRESH_BINARY
+    )
+
+    mask_pontos_sep = np.uint8(mask_pontos_sep)
+
+    # Pequena dilatação para recuperar formato
+    kernel_restore = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (3, 3)
+    )
+
+    mask_pontos_sep = cv2.dilate(
+        mask_pontos_sep,
+        kernel_restore,
+        iterations=1
+    )
+
+    # Fecha fragmentos do traço interrompidos pelo pino de aço
+    # Kernel horizontal: une fragmentos ao longo do comprimento do traço
+    kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
+    mask_tracos_close = cv2.morphologyEx(mask_esp_tracos, cv2.MORPH_CLOSE, kernel_h, iterations=3)
+    mask_tracos_close = cv2.morphologyEx(mask_tracos_close, cv2.MORPH_CLOSE, kernel_close, iterations=1)
+    mask_pontos = cv2.bitwise_or(mask_tracos_unidos, mask_pontos_sep)
+
 
     if args.debug:
-        print(f"Contornos encontrados: {len(cnt_finais)}")
+        cv2.imshow("TRACO -- Mask Pontos separados", mask_pontos_erode)
+        cv2.imshow("TRACO -- Mask Tracos fechados", mask_tracos_close)
+        cv2.imshow("TRACO -- Tracos fechados Aling", mask_tracos_unidos)
+        cv2.imshow("TRACO -- Mask Tracos e Pontos", mask_pontos)
 
-    varia = True
+    # --- Coleta contornos dos traços e calcula média do comprimento ---
+    cnts_tracos, _ = cv2.findContours(mask_tracos_unidos, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    for cnt in cnt_finais:
-        area = cv2.contourArea(cnt)
-        # if area < 10 or area > 2200:
-        #     continue
-        # if area_max > area > area_min * 0.7:
-        if (area_min * 7) > area:
-            rect = cv2.minAreaRect(cnt)
-            center, size, angle = rect
-            w_box, h_box = size
+    comprimentos = []
+    for c in cnts_tracos:
+        r = cv2.minAreaRect(c)
+        _, (w_t, h_t), _ = r
+        comp = max(w_t, h_t)
+        esp  = min(w_t, h_t)
+        if esp == 0:
+            continue
+        ratio_t = comp / esp
+        # Traço válido: comprido e fino
+        if ratio_t > 3.0 and comp > 8 * args.zoom:
+            comprimentos.append(comp)
 
-            if w_box == 0 or h_box == 0:
-                # print("Box com dimensões zeradas")
+    if comprimentos:
+        med_comp_traco = float(np.median(comprimentos))
+        print(f"TRACO -- Mediana comprimento dos traços: {med_comp_traco:.1f}px")
+
+        # Pedra de dominó: traço central ≈ 85% da largura interna da pedra
+        # Ratio pedra ≈ 2:1  →  altura_pedra ≈ 2 * largura_pedra
+        # largura_pedra ≈ comp_traco / 0.85
+        # altura_pedra  ≈ largura_pedra * 2
+        largura_pedra_est = med_comp_traco / 0.80
+        altura_pedra_est  = largura_pedra_est * 2.0
+
+        # Margem extra para não cortar as bolinhas nas bordas
+        margem_extra = 1.15
+        largura_final = largura_pedra_est * margem_extra
+        altura_final  = altura_pedra_est  * margem_extra
+
+        candidatos_traco = []
+
+        for c in cnts_tracos:
+            r = cv2.minAreaRect(c)
+            (cx_t, cy_t), (w_t, h_t), angle_t = r
+            comp = max(w_t, h_t)
+            esp  = min(w_t, h_t)
+            if esp == 0:
+                continue
+            ratio_t = comp / esp
+
+            if ratio_t < 3.0 or not (med_comp_traco * 0.6 <= comp <= med_comp_traco * 1.4):
                 continue
 
-            width, height = size
+            # Usa alinhar_contorno para obter o ângulo real do lado longo
+            # independente de como o minAreaRect ordenou w/h
+            _, _, cw_al, ch_al, angle_alinhado = alinhar_contorno(c)
+            # angle_alinhado já aponta para o lado longo (ch > cw após alinhamento)
+            # rect_pedra: largura_final é o lado curto, altura_final é o lado longo
+            # o ângulo do minAreaRect para o lado longo = angle_alinhado - 90
+            angle_pedra = angle_alinhado - 90
 
-            if width > height:
-                ratio = width/height
-                margem_A = 0.99
-                margem_L = 1.07
+            rect_pedra_traco = ((cx_t, cy_t), (largura_final, altura_final), angle_pedra)
 
-            else:
-                ratio = height/width
-                margem_A = 1.12
-                margem_L = 1.08
-
-            if args.debug:
-                cx, cy = map(int, center)
-                val = 0
-                if varia:
-                    val = 30
-                    varia = False
-                else:
-                    val = 0
-                    varia = True
-                cv2.putText(out_debug, f"Area = {area}", (cx - 20, cy - (50 + val)), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1)
-                cv2.putText(out_debug, f"Ratio = {ratio:.1f}", (cx - 20, cy - (30 + val)), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1)
-                cv2.drawContours(out_debug, cnt, -1, 255, -1)
-                cv2.imshow("0 -- Pedras", out_debug)
-                # cv2.imshow("0 -- Mask Removidos", mask_pontos)
-                cv2.waitKey()
-
-            # print(f"Valor de ratio: {ratio} e Área: {area}")
-
-            if not (2.4 >= ratio >= 1.5):
-                # print(f"Ratio fora do padrão: {ratio}")
-                # cv2.imshow("0 -- Mask Cortada", mask_diferenca)
-                # cv2.imshow("0 -- Mask Removidos", mask_pontos)
-                # cv2.waitKey()
-                # sys.exit(0)
-                continue
-
-            rect_pedra = (center, (width*margem_L, height*margem_A), angle)
-
-            candidatos.append({
-                'rect_pedra': rect_pedra,
-                'centro': center
+            candidatos_traco.append({
+                'rect_pedra': rect_pedra_traco,
+                'centro': (cx_t, cy_t)
             })
-        else:
-            if args.debug:
-                print(f"Área fora do range: {area}")
-            pass
 
-    if args.debug:
-        print(f"Candidatos aprovados: {len(candidatos)}")
+            # if args.debug:
+            #     box_t = np.int32(cv2.boxPoints(r))
+            #     box_p = np.int32(cv2.boxPoints(rect_pedra_traco))
+            #     img_tr = img.copy()
+            #     cv2.drawContours(img_tr, [box_t], 0, (255, 0, 0), 1)   # traço azul
+            #     cv2.drawContours(img_tr, [box_p], 0, (0, 255, 0), 2)   # pedra verde
+            #     cv2.imshow("TRACO -- Debug por traço", img_tr)
+            #     cv2.waitKey(0)
 
+        # --- Deduplicação por proximidade (igual ao pipeline de vales) ---
+        pedras_traco_unicas = []
+        for cand in candidatos_traco:
+            cx1, cy1 = cand['centro']
+            dup = False
+            for p in pedras_traco_unicas:
+                cx2, cy2 = p['centro']
+                if math.hypot(cx2 - cx1, cy2 - cy1) < args.proximidade:
+                    dup = True
+                    break
+            if not dup:
+                pedras_traco_unicas.append(cand)
 
+        # --- Maior bando (igual ao pipeline de vales) ---
+        DIST_CONEXAO_TRACO = CONFIGS['distancia_conexao'] * args.zoom
+        visitados_t = set()
+        bandos_t = []
 
-    pedras_unicas = []
+        for i, p1 in enumerate(pedras_traco_unicas):
+            if i in visitados_t:
+                continue
+            bando = [p1]
+            visitados_t.add(i)
+            fila = [p1]
+            while fila:
+                foco = fila.pop(0)
+                cx_f, cy_f = foco['centro']
+                for j, p2 in enumerate(pedras_traco_unicas):
+                    if j not in visitados_t:
+                        cx2, cy2 = p2['centro']
+                        if math.hypot(cx2 - cx_f, cy2 - cy_f) <= DIST_CONEXAO_TRACO:
+                            bando.append(p2)
+                            visitados_t.add(j)
+                            fila.append(p2)
+            bandos_t.append(bando)
 
-    for cand in candidatos:
-        cx1, cy1 = cand['centro']
-        duplicata = False
+        pedras_traco_aprovadas = max(bandos_t, key=len) if bandos_t else []
+        pedras_traco_aprovadas.sort(key=lambda x: x['centro'][1])
 
-        for p in pedras_unicas:
-            cx2, cy2 = p['centro']
-            if math.hypot(cx2 - cx1, cy2 - cy1) < args.proximidade:
-                duplicata = True
-                break
+        print(f"TRACO -- Pedras detectadas por traço: {len(pedras_traco_aprovadas)}")
 
-        if not duplicata:
-            pedras_unicas.append(cand)
+        # --- Resultado visual lado a lado com o pipeline de vales ---
+        out_traco = img.copy()
+        med_area_traco = 0.0
 
+        for d in pedras_traco_aprovadas[:]:
+            pts_cima, pts_baixo, zero, med_ar = extrair_e_contar(mask_pontos, d['rect_pedra'])
+            texto = f"{pts_cima}|{pts_baixo}"
+            if texto == "0|0" and not zero:
+                pedras_traco_aprovadas.remove(d)
+                continue
+            med_area_traco += med_ar
+            box_p = np.int32(cv2.boxPoints(d['rect_pedra']))
+            cv2.drawContours(out_traco, [box_p], 0, (0, 255, 0), 2)
+            cx, cy = int(d['centro'][0]), int(d['centro'][1])
+            cv2.putText(out_traco, texto, (cx - 10, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+            cv2.putText(out_traco, texto, (cx - 10, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            print(f"TRACO -- Pedra: {texto}")
 
-    # ==========================================
-    # PASSO 2: O Filtro da "Área de Influência" (O Maior Bando)
-    # ==========================================
-    DISTANCIA_CONEXAO = CONFIGS['distancia_conexao'] * args.zoom  # Tamanho da "Área de influência" de cada pedra
+        if med_area_traco > 0 and pedras_traco_aprovadas:
+            med_area_traco = abs(med_area_traco / len(pedras_traco_aprovadas))
+        cv2.putText(out_traco, f"Area media Pontos: {med_area_traco:.2f}", (10, 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        cv2.imshow("TRACO -- Resultado por Tracos", out_traco)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
-    visitados = set()
-    todos_os_bandos = []
-
-    for i, p1 in enumerate(pedras_unicas):
-        # Se essa pedra já entrou num bando antes, ignoramos
-        if i in visitados:
-            continue
-
-        # Começamos um novo bando com essa pedra
-        bando_atual = [p1]
-        visitados.add(i)
-
-        # A "Fila de Expansão" (vai checar os amigos dos amigos)
-        fila_de_expansao = [p1]
-
-        while fila_de_expansao:
-            pedra_foco = fila_de_expansao.pop(0)
-            cx_foco, cy_foco = pedra_foco['centro']
-
-            # Procura novos amigos para puxar para o bando
-            for j, p2 in enumerate(pedras_unicas):
-                if j not in visitados:
-                    cx2, cy2 = p2['centro']
-                    dist = math.hypot(cx2 - cx_foco, cy2 - cy_foco)
-
-                    # Se a pedra está dentro da área de influência, entra pro bando!
-                    if dist <= DISTANCIA_CONEXAO:
-                        bando_atual.append(p2)
-                        visitados.add(j)
-                        # Coloca ela na fila para a área de influência dela também ser checada!
-                        fila_de_expansao.append(p2)
-
-        # Guarda o bando que acabamos de formar
-        todos_os_bandos.append(bando_atual)
-
-    # ==========================================
-    # PASSO 3: Sobrevivência do Mais Forte
-    # ==========================================
-    if todos_os_bandos:
-        # A função max() com 'key=len' pega automaticamente a lista que tem mais itens!
-        maior_bando = max(todos_os_bandos, key=len)
-        pedras_aprovadas = maior_bando
     else:
-        pedras_aprovadas = []
+        print("TRACO -- Nenhum traço válido encontrado, usando apenas pipeline de vales.")
 
-    print(f"Pedras encontradas: {len(pedras_aprovadas)}")
-
-    # Ordena as pedras de cima para baixo (pelo eixo Y do centro)
-    pedras_aprovadas.sort(key=lambda x: x['centro'][1])
-
-    med_area_ponto = 0.0
-
-    for d in pedras_aprovadas[:]:
-        # Enviamos a imagem original limpa (img) e o retângulo da pedra
-        pts_cima, pts_baixo, zero, med_ar = extrair_e_contar(mask_pontos, d['rect_pedra'])
-        texto = f"{pts_cima}|{pts_baixo}"
-        if texto == "0|0" and not zero:
-            pedras_aprovadas.remove(d)
-            continue
-        med_area_ponto += med_ar
-        box_pedra = np.int32(cv2.boxPoints(d['rect_pedra']))
-        cv2.drawContours(out, [box_pedra], 0, (0, 255, 0), 2)
-        # Escrever o resultado na imagem, do lado da pedra!
-
-        cx, cy = int(d['centro'][0]), int(d['centro'][1])
-
-        # Fundo preto para o texto ficar legível
-        cv2.putText(out, texto, (cx - 10, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
-        # Texto em branco
-        cv2.putText(out, texto, (cx - 10, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-        print(f"Pedra encontrada: {texto}")
-    if med_area_ponto > 0.0:
-        med_area_ponto = abs(med_area_ponto / len(pedras_aprovadas))
-    print(f"Pedras aprovadas: {len(pedras_aprovadas)}")
-    time_end = time.time() - time_start
-    print(f"Tempo de duração da execução: {time_end}")
-    cv2.putText(out, f"Area media dos Pontos: {med_area_ponto:.2f}", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-    # cv2.imshow("Pedra Solida", mask_pedra_solida)
-    # cv2.imshow("Mask Branca", mask_branca)
-    # cv2.imshow("Mask Soldada", mask_soldada)
-    cv2.imshow("Resultado Final Limpo", out)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
 def extrair_e_contar(img, rect_pedra):
     center, size, angle = rect_pedra
@@ -384,7 +494,7 @@ def extrair_e_contar(img, rect_pedra):
         if perimetro == 0:
             continue
         circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-        if circularidade >= 0.6:
+        if circularidade >= 0.5:
             med_ar += area
             count += 1
 
@@ -461,8 +571,9 @@ def contar_bolinhas(med_bruta, metade):
         if perimetro == 0:
             continue
         circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-        # print(f"Circularidade: {circularidade}")
-        if circularidade >= 0.6 and area >= (med_bruta * 0.7) :   # levemente mais permissivo pós INTER_NEAREST
+        print(f"Circularidade: {circularidade}")
+        # if (med_bruta * 1.5) > area > (med_bruta * 0.5):
+        if circularidade >= 0.5 and (med_bruta * 1.5) >= area >= (med_bruta * 0.5) :   # levemente mais permissivo pós INTER_NEAREST
             med_area += area
             pontos += 1
 

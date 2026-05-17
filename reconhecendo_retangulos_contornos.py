@@ -96,7 +96,7 @@ def pipeline_blackhat(img_path):
             tela_ilha = cv2.dilate(tela_ilha, kernel_derreter, iterations=3)
 
             mask_fatiada_final = cv2.bitwise_or(mask_fatiada_final, tela_ilha)
-            cv2.drawContours(img_debug, [cnt_ilha], 0, (0, 0,255), 2)
+            cv2.drawContours(img_debug, [cnt_ilha], 0, (0, 0, 255), 2)
 
     # Opcional: Mostre a máscara final para ver os cortes perfeitos!
     # cv2.imshow('2 - Mascara Fatiada Final', mask_fatiada_final)
