@@ -14,7 +14,7 @@ def parse_arguments():
     parser.add_argument('-z', '--zoom', type=float, default=1.0, help='Nível de zoom (padrão 1.0)')
     parser.add_argument('-p', '--proximidade', type=int, default=37, help='Distância mínima entre pedras')
     parser.add_argument('-L', '--limiar', type=int, default=190, help='Limiar de branco (0-255), valores de uso 150-200')
-    parser.add_argument('-d', '--debug', action='store_true', help='Ativa modo depuração')
+    parser.add_argument('-d', '--debug', nargs='*', default=None, help='Ativa debug. Códigos: Pn=pontos, Mb=mascaras, Tr=tracos, Vl=vales')
     return parser.parse_args()
 
 
@@ -24,10 +24,91 @@ CONFIGS = {
     'distancia_conexao': 600,
     'tamanho_kernel_morfologia': 15, # Novo parâmetro para o tamanho da fenda a ser fechada
     'area_max': 2000,                # Area maxima das pedras
-    'area_min': 500,
+    'area_min': 300,
     'area_ponto': 15,
 }
 
+
+def debug_ativo(categoria=None):
+    """
+    Sem categoria: verifica se qualquer debug está ativo.
+    Com categoria: verifica se aquela categoria específica está ativa,
+    ou se foi chamado -d sem argumentos (debug geral).
+    Códigos: Pn=pontos, Mb=mascaras, Tr=tracos, Vl=vales'.
+    """
+    if args.debug is None:
+        return False
+    if categoria is None:
+        return True
+    # -d sem argumentos = debug geral (ativa tudo)
+    if len(args.debug) == 0:
+        return True
+    return categoria in args.debug
+
+def validar_rect_na_mask(rect_pedra, mask_filtrada, limiar_ocupacao=0.80):
+    """
+    Verifica se o rect_pedra cobre ao menos limiar_ocupacao (80%) de pixels
+    brancos na mask_filtrada. Retorna True se for uma pedra válida.
+    """
+    # Cria máscara do rect rotacionado
+    mask_rect = np.zeros(mask_filtrada.shape, dtype=np.uint8)
+    box = np.int32(cv2.boxPoints(rect_pedra))
+    cv2.fillPoly(mask_rect, [box], 255)
+
+    # Pixels dentro do rect
+    total_pixels = cv2.countNonZero(mask_rect)
+    if total_pixels == 0:
+        return False
+
+    # Pixels brancos na mask_filtrada dentro do rect
+    intersecao = cv2.bitwise_and(mask_filtrada, mask_rect)
+    pixels_brancos = cv2.countNonZero(intersecao)
+
+    ocupacao = pixels_brancos / total_pixels
+    return ocupacao >= limiar_ocupacao
+
+def calcular_limiar_adaptativo(gray, args):
+    if args.limiar != 190:  # usuário passou -L manualmente
+        return args.limiar, gray
+
+    # Percentil 85 dos pixels — representa a região mais clara da imagem
+    # (o plástico branco das pedras puxa esse valor para cima)
+    p85 = np.percentile(gray, 60)
+
+    # Otsu restrito: analisa só os pixels ACIMA do percentil 85
+    # Isso foca o histograma na transição fundo claro → plástico branco
+    pixels_claros = gray[gray > p85]
+
+    if len(pixels_claros) == 0:
+        return args.limiar, gray
+
+    # Histograma só dos pixels claros
+    hist = np.bincount(pixels_claros.astype(np.uint8), minlength=256).astype(np.float32)
+
+    # Otsu manual nessa faixa restrita
+    total = pixels_claros.size
+    soma = np.dot(np.arange(256), hist)
+    soma_b, peso_b, maximo, limiar = 0.0, 0.0, 0.0, int(p85)
+
+    for t in range(int(p85), 256):
+        peso_b += hist[t]
+        if peso_b == 0:
+            continue
+        peso_f = total - peso_b
+        if peso_f == 0:
+            break
+        soma_b += t * hist[t]
+        media_b = soma_b / peso_b
+        media_f = (soma - soma_b) / peso_f
+        variancia = peso_b * peso_f * (media_b - media_f) ** 2
+        if variancia > maximo:
+            maximo = variancia
+            limiar = t
+
+    # Garante que fica numa faixa razoável para dominó (160-220)
+    limiar = int(np.clip(limiar, 160, 220))
+    print(f"Limiar automático (Otsu restrito p85): {limiar}")
+    return limiar, gray
 
 def pipeline_blackhat(args):
     time_start = time.time()
@@ -41,18 +122,13 @@ def pipeline_blackhat(args):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
    # 1. Máscara Sólida Base
-    _, mask_branca = cv2.threshold(gray, args.limiar, 255, cv2.THRESH_BINARY)
+    # _, mask_branca = cv2.threshold(gray, args.limiar, 255, cv2.THRESH_BINARY)
+    limiar, gray = calcular_limiar_adaptativo(gray, args)
+    _, mask_branca = cv2.threshold(gray, limiar, 255, cv2.THRESH_BINARY)
     contours_ext, _ = cv2.findContours(mask_branca, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # cv2.imshow("1 - Mask Branca", mask_branca)
 
     mask_solida = np.zeros_like(gray)
     cv2.drawContours(mask_solida, contours_ext, -1, 255, thickness=cv2.FILLED)
-
-    # mask_branca = cv2.medianBlur(mask_branca, 3)
-    # cv2.imshow("1 - Mask Branca 120", mask_branca)
-    # mask_solida = cv2.medianBlur(mask_solida, 3)
-    # cv2.imshow("1 - Mask Branca 190", mask_branca_1)
-
 
     # Refinamento de Contornos
     cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -68,6 +144,11 @@ def pipeline_blackhat(args):
     for c in cnts_pre:
         if cv2.contourArea(c) > area_min:
             cv2.drawContours(mask_filtrada, [c], -1, 255, -1)
+
+    if debug_ativo('Mb'):
+        cv2.imshow("1 - Mask Branca", mask_branca)
+        cv2.imshow("1 - Mask Filtrada", mask_filtrada)
+        # cv2.imshow("1 - Mask Cinza", gray)
 
     # Alinhar contorno
     def alinhar_contorno(contorno):
@@ -172,7 +253,9 @@ def pipeline_blackhat(args):
             'cy': cy,
             'angle': angle
         })
+
     mask_tracos_unidos = np.zeros_like(gray)
+
     for frag in fragmentos:
         cv2.drawContours(
             mask_tracos_unidos,
@@ -249,7 +332,7 @@ def pipeline_blackhat(args):
     )
 
     # Visualização debug
-    if args.debug:
+    if debug_ativo('Tr'):
         dist_show = cv2.normalize(
             dist,
             None,
@@ -270,17 +353,24 @@ def pipeline_blackhat(args):
 
     mask_pontos_sep = np.uint8(mask_pontos_sep)
 
-    # Pequena dilatação para recuperar formato
-    kernel_restore = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (3, 3)
-    )
+    # Normaliza dist para 0-255 uint8
+    # dist_norm = cv2.normalize(dist, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    # otsu_val, mask_pontos_sep = cv2.threshold(dist_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # print(f"OtsuVal: {otsu_val:.0f}")
 
-    mask_pontos_sep = cv2.dilate(
-        mask_pontos_sep,
-        kernel_restore,
-        iterations=1
-    )
+    # mask_pontos_sep = np.uint8(mask_pontos_sep)
+
+    # Pequena dilatação para recuperar formato
+    # kernel_restore = cv2.getStructuringElement(
+    #     cv2.MORPH_ELLIPSE,
+    #     (3, 3)
+    # )
+    #
+    # mask_pontos_sep = cv2.dilate(
+    #     mask_pontos_sep,
+    #     kernel_restore,
+    #     iterations=1
+    # )
 
     # Fecha fragmentos do traço interrompidos pelo pino de aço
     # Kernel horizontal: une fragmentos ao longo do comprimento do traço
@@ -290,9 +380,9 @@ def pipeline_blackhat(args):
     mask_pontos = cv2.bitwise_or(mask_tracos_unidos, mask_pontos_sep)
 
 
-    if args.debug:
-        cv2.imshow("TRACO -- Mask Pontos separados", mask_pontos_erode)
-        cv2.imshow("TRACO -- Mask Tracos fechados", mask_tracos_close)
+    if debug_ativo('Tr'):
+        cv2.imshow("TRACO -- Mask Pontos separados", mask_pontos_sep)
+        # cv2.imshow("TRACO -- Mask Tracos fechados", mask_tracos_close)
         cv2.imshow("TRACO -- Tracos fechados Aling", mask_tracos_unidos)
         cv2.imshow("TRACO -- Mask Tracos e Pontos", mask_pontos)
 
@@ -352,12 +442,15 @@ def pipeline_blackhat(args):
 
             rect_pedra_traco = ((cx_t, cy_t), (largura_final, altura_final), angle_pedra)
 
+            if not validar_rect_na_mask(rect_pedra_traco, mask_filtrada):
+                continue  # rect mal orientado ou fora da pedra real
+
             candidatos_traco.append({
                 'rect_pedra': rect_pedra_traco,
                 'centro': (cx_t, cy_t)
             })
 
-            # if args.debug:
+            # if debug_ativo('Tr):
             #     box_t = np.int32(cv2.boxPoints(r))
             #     box_p = np.int32(cv2.boxPoints(rect_pedra_traco))
             #     img_tr = img.copy()
@@ -478,7 +571,7 @@ def extrair_e_contar(img, rect_pedra):
     metade_cima = pedra_recortada[0:meio, :]
     metade_baixo = pedra_recortada[meio:, :]
 
-    if args.debug:
+    if debug_ativo('Pn'):
         cv2.imshow("Medade da Pedra", metade_cima)
         cv2.imshow("Medade da Pedra 2", metade_baixo)
         # print(f"Ratio do traço: {ratio}")
@@ -571,9 +664,10 @@ def contar_bolinhas(med_bruta, metade):
         if perimetro == 0:
             continue
         circularidade = 4 * np.pi * (area / (perimetro * perimetro))
-        print(f"Circularidade: {circularidade}")
+        if debug_ativo('Pn'):
+            print(f"Circularidade: {circularidade}  --- Area: {area}  --- Area media: {med_bruta}")
         # if (med_bruta * 1.5) > area > (med_bruta * 0.5):
-        if circularidade >= 0.5 and (med_bruta * 1.5) >= area >= (med_bruta * 0.5) :   # levemente mais permissivo pós INTER_NEAREST
+        if circularidade >= 0.5 and (med_bruta * 2.2) >= area >= (med_bruta * 0.1) :   # levemente mais permissivo pós INTER_NEAREST
             med_area += area
             pontos += 1
 
@@ -599,9 +693,9 @@ def detectar_vales_por_morfologia(mask_solida):
 
     # 2. Subtração (O Pulo do Gato)
     mask_vales = cv2.subtract(mask_fechada, mask_solida)
-    # if args.debug:
-    #     cv2.imshow("1 - Mask Solida", mask_solida) # Descomente se precisar debugar
-    #     cv2.imshow("1 - Mask Vales", mask_vales) # Descomente se precisar debugar
+    if debug_ativo('Vl'):
+        cv2.imshow("1 - Mask Solida", mask_solida) # Descomente se precisar debugar
+        cv2.imshow("1 - Mask Vales", mask_vales) # Descomente se precisar debugar
 
     # 3. Extrair os Pontos
     cnts_vales, _ = cv2.findContours(mask_vales, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

@@ -564,7 +564,7 @@ def processar_frame(img, tempo_atual, args):
     # print(f"Valor de Coordenadas do contorno de averiguação: {cord_cont}")
     # processar = True
     
-    if processar or time.time() - time_exec <= 6.5:
+    if processar or time.time() - time_exec <= 16.5:
         # Refinamento de Contornos
         cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         mask_filtrada = np.zeros_like(gray)
@@ -786,7 +786,7 @@ def processar_frame(img, tempo_atual, args):
             altura_pedra_est  = largura_pedra_est * 2.0
 
             # Margem extra para não cortar as bolinhas nas bordas
-            margem_extra = 1.15
+            margem_extra = 1.06
             largura_final = largura_pedra_est * margem_extra
             altura_final  = altura_pedra_est  * margem_extra
 
