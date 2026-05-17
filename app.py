@@ -198,7 +198,7 @@ def contar_bolinhas(med_bruta, metade):
             continue
         circularidade = 4 * np.pi * (area / (perimetro * perimetro))
         # print(f"Circularidade: {circularidade}")
-        if circularidade >= 0.5 and (med_bruta * 1.5) >= area >= (med_bruta * 0.5) :   # levemente mais permissivo pós INTER_NEAREST
+        if circularidade >= 0.5 and (med_bruta * 2.2) >= area >= (med_bruta * 0.1) :   # levemente mais permissivo pós INTER_NEAREST
             med_area += area
             pontos += 1
 
@@ -478,6 +478,29 @@ def corrigir_orientacao(img):
         # Imagem em portrait → rotaciona para landscape
         img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
     return img
+
+def validar_rect_na_mask(rect_pedra, mask_filtrada, limiar_ocupacao=0.80):
+    """
+    Verifica se o rect_pedra cobre ao menos limiar_ocupacao (80%) de pixels
+    brancos na mask_filtrada. Retorna True se for uma pedra válida.
+    """
+    # Cria máscara do rect rotacionado
+    mask_rect = np.zeros(mask_filtrada.shape, dtype=np.uint8)
+    box = np.int32(cv2.boxPoints(rect_pedra))
+    cv2.fillPoly(mask_rect, [box], 255)
+
+    # Pixels dentro do rect
+    total_pixels = cv2.countNonZero(mask_rect)
+    if total_pixels == 0:
+        return False
+
+    # Pixels brancos na mask_filtrada dentro do rect
+    intersecao = cv2.bitwise_and(mask_filtrada, mask_rect)
+    pixels_brancos = cv2.countNonZero(intersecao)
+
+    ocupacao = pixels_brancos / total_pixels
+    return ocupacao >= limiar_ocupacao
+
 
 def processar_frame(img, tempo_atual, args):
     """Processa o frame de forma otimizada"""
@@ -813,6 +836,9 @@ def processar_frame(img, tempo_atual, args):
                 angle_pedra = angle_alinhado - 90
 
                 rect_pedra_traco = ((cx_t, cy_t), (largura_final, altura_final), angle_pedra)
+
+                if not validar_rect_na_mask(rect_pedra_traco, mask_filtrada):
+                    continue  # rect mal orientado ou fora da pedra real
 
                 candidatos.append({
                     'rect_pedra': rect_pedra_traco,
