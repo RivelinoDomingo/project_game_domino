@@ -35,6 +35,7 @@ duplicada = None
 zoom_reset = False
 largura_frame = 0
 altura_frame = 0
+ultimo_processamento_forcado = 0.0
 
 debug_mode = True
 start = True
@@ -291,12 +292,12 @@ def inicializar_camera():
     """Inicializa a câmera com tentativas e timeout"""
     global camera
     try:
-        
+
         if device.startswith(("http://", "https://")):
             camera = cv2.VideoCapture(device)
         else:
             camera = cv2.VideoCapture(device, cv2.CAP_FFMPEG)
-            
+
         if not camera.isOpened():
             print("⚠️ Falha ao abrir câmera, tentando novamente...")
             time.sleep(1)
@@ -573,12 +574,21 @@ def processar_frame(img, tempo_atual, args):
 
     global conf_busca, area_base, cord_cont, detectar_vales_por_morfologia
     global encontrar_pares_corte, cortar_nos_vales_inteligente
+    global ultimo_processamento_forcado
 
     # print(f"Valor de Coordenadas do contorno: {cord_cont}")
     # out = img.copy()
     out = None
 
     processar = False
+
+    # 1. Forçar processamento mínimo a cada N segundos mesmo sem movimento
+    INTERVALO_FORCADO = 5.0  # segundos
+
+    # processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
+
+
+
     if not conf_busca:
         processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, CONFIGS['area_min'], cord_cont)
         conf_busca = True
@@ -586,7 +596,12 @@ def processar_frame(img, tempo_atual, args):
         processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
     # print(f"Valor de Coordenadas do contorno de averiguação: {cord_cont}")
     # processar = True
-    
+
+    tempo_atual_local = time.time()
+    if not processar and (tempo_atual_local - ultimo_processamento_forcado) > INTERVALO_FORCADO:
+        processar = True
+        ultimo_processamento_forcado = tempo_atual_local
+
     if processar or time.time() - time_exec <= 16.5:
         # Refinamento de Contornos
         cnts_pre, _ = cv2.findContours(mask_solida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
