@@ -687,6 +687,8 @@
             recalcularLayout();
         }
 
+        let fatorBase = 1.6;
+
         document.getElementById('slider-fator').addEventListener('input', function() {
             fatorBase = parseFloat(this.value);
             document.getElementById('valor-fator').textContent = fatorBase.toFixed(2);
@@ -796,6 +798,8 @@
 
             const containerW = container.clientWidth || 800;
             const containerH = container.clientHeight || 500;
+
+            // console.log("Fator base:", fatorBase);
 
             const larguraNecessaria = (spanX * fatorBase) + 80;
             const alturaNecessaria = (spanY * fatorBase) + 80;
@@ -1035,7 +1039,7 @@
                 // Log de performance (a cada 20 chamadas)
                 if (contadorFrames % 20 === 0) {
                     const tempoTotal = performance.now() - tempoInicio;
-                    console.log(`⚡ Loop executado em ${tempoTotal.toFixed(0)}ms`);
+                    // console.log(`⚡ Loop executado em ${tempoTotal.toFixed(0)}ms`);
                 }
 
             } catch (error) {
@@ -1050,6 +1054,7 @@
             }
             animationId = requestAnimationFrame(loopAnimacao);
         }
+
         animationId = requestAnimationFrame(loopAnimacao);
 
         window.addEventListener('resize', () => {
