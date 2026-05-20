@@ -23,7 +23,7 @@ ultimo_tempo_processamento = 0
 ultimo_frame_processado = None
 INTERVALO_SEGUNDOS = 0.5
 executando_servidor = True
-enviar_video = True
+enviar_video = False
 DISTANCIA_MINIMA = 37
 modo_leitura = 'mesa'
 actions = {'rst': 'False', 'zoom': '0.0'}
@@ -583,7 +583,7 @@ def processar_frame(img, tempo_atual, args):
     processar = False
 
     # 1. Forçar processamento mínimo a cada N segundos mesmo sem movimento
-    INTERVALO_FORCADO = 5.0  # segundos
+    INTERVALO_FORCADO = 2.0  # segundos
 
     # processar, area_base, cord_cont, time_exec = nova_pedra(mask_solida, area_base, cord_cont)
 

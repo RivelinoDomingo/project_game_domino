@@ -987,12 +987,23 @@
             return pedrasFiltradas;
         }
 
+        let loopEmExecucao = false;
+
         async function loopDoJogo() {
+            if (loopEmExecucao) return;  // já tem um fetch em andamento
+            loopEmExecucao = true;
             const tempoInicio = performance.now();
 
             try {
-                const resposta = await fetch('/api/estado_jogo');
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 3000); // timeout de 3s
+
+                const resposta = await fetch('/api/estado_jogo', { signal: controller.signal });
+                clearTimeout(timeout);
                 const dados = await resposta.json();
+
+                // const resposta = await fetch('/api/estado_jogo');
+                // const dados = await resposta.json();
 
                 if (dados.duplicada && dados.duplicada !== 'null' && dados.duplicada !== null) {
                     mostrarToast(dados.duplicada);
@@ -1043,7 +1054,14 @@
                 }
 
             } catch (error) {
-                console.error("Erro na comunicação com o VAR:", error);
+                if (error.name === 'AbortError') {
+                    // Timeout ou abort intencional — não loga como erro crítico
+                    console.warn("Fetch do VAR abortado (timeout ou rede lenta)");
+                } else {
+                    console.error("Erro na comunicação com o VAR:", error);
+                }
+            } finally {
+                loopEmExecucao = false;  // libera para o próximo ciclo
             }
         }
 
@@ -1068,10 +1086,17 @@
         // INTEGRAÇÃO COM O FIREBASE (PLACAR DOMINÓ)
         // ==========================================
         const URL_FIREBASE = "https://firestore.googleapis.com/v1/projects/placar-domino/databases/(default)/documents/hardware/display";
+        let firebaseController = null;
 
         async function sincronizarPlacarFirebase() {
+            // Cancela chamada anterior se ainda estiver pendente
+            if (firebaseController) firebaseController.abort();
+            firebaseController = new AbortController();
+
             try {
-                const resposta = await fetch(URL_FIREBASE);
+                const resposta = await fetch(URL_FIREBASE, { signal: firebaseController.signal });
+
+                // const resposta = await fetch(URL_FIREBASE);
                 const json = await resposta.json();
 
                 if (!json || !json.fields) return;
@@ -1107,9 +1132,19 @@
                 }
 
             } catch (error) {
-                console.error("Erro ao sincronizar com o Firebase:", error);
+                if (error.name === 'AbortError') {
+                    console.warn("Sync Firebase abortado");
+                } else {
+                    console.error("Erro ao sincronizar com o Firebase:", error);
+                }
             }
         }
+
+        // Limpa tudo quando a página for fechada/recarregada
+        window.addEventListener('beforeunload', () => {
+            if (firebaseController) firebaseController.abort();
+            if (animationId) cancelAnimationFrame(animationId);
+        });
 
         let firebaseTimeout = null;
         function sincronizarPlacarFirebaseThrottled() {
